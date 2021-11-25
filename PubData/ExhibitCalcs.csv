@@ -1,0 +1,4 @@
+MDRM_Item,Report,LI_Category,LI_Description,Sort,Calculation
+LINE1,Balance Sheet,Earning Assets, Interest-earning deposits ,1,RCON0071
+LINE2,Balance Sheet,Earning Assets, Fed funds sold ,2,#NAME?
+LINE5,Balance Sheet,Earning Assets,Total Earning Assets,5,LINE1 + LINE2
