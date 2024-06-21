@@ -1,97 +1,105 @@
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
-from FDIC.constants import direcOrig
-from FDIC.constants import direcDest
-from FDIC.constants import direc
-from FDIC.constants import ffiec_un
-from FDIC.constants import ffiec_pw
+from fuzzywuzzy import fuzz, process
+#from FDIC.constants import folder_Orig, folder_Dest, path, service_path, filename_BankDim
+import FDIC.constants as paths
+from FDIC.constants_private import ffiec_un, ffiec_pw
+
 import pandas as pd
-from zeep import Client, xsd
+from zeep import Client, xsd, exceptions
 from zeep.wsse.username import UsernameToken
 import re
 import os.path
 import glob
 import xml.etree.ElementTree as ET
-import datetime as dt
+import datetime
 import FDIC.wsio as wsio
 
 
 def GenBankDim():
-    datat = {'RSSD_ID':str,
-              'FDIC_Certificate_Number':str,
-              'OCC_Charter_Number':str,
-              'OTS_Docket_Number':str,
-              'Primary_ABA_Routing_Number':str,
-              'Financial_Institution_Name': str,
-              'Financial_Institution_Address': str,
+    """
+    
+    """
+    dtypes = {'RSSD_ID':str,
+             'FDIC_Certificate_Number':str,
+             'OCC_Charter_Number':str,
+             'OTS_Docket_Number':str,
+             'Primary_ABA_Routing_Number':str,
+             'Financial_Institution_Name': str,
+             'Financial_Institution_Address': str,
              'Financial_Institution_City': str,
              'Financial_Institution_State': str,
              'Financial_Institution_Zip_Code': str,
              'Financial_Institution_Filing_Type': str}
-    RssdDict = wsio.ReadCSV(direcOrig + 'RSSD_Dict', dtype = datat)
+    RssdDict = wsio.ReadCSV(paths.folder_Orig + 'RSSD_Dict', dtype = dtypes)
 
     # Set up Bank Name lookup
     BankDict = []
     cnt = 0
-    # Make zip code 5 digits
+    # ___
+    
+    print('Generate Bank Dictionary:')
     for i, r in RssdDict.iterrows():
-        zp = str(r['Financial_Institution_Zip_Code'])
-        if len(zp) > 5:
-            RssdDict.loc[i,['Financial_Institution_Zip_Code']] = int(zp[:5])
-        dbank = r['Financial_Institution_Name']
-        tz = r['Financial_Institution_Zip_Code'].strip()
-        st = r['Financial_Institution_State'].strip().upper()
-        ct = r['Financial_Institution_City'].strip().upper()
-        choices = RssdDict[RssdDict.Financial_Institution_Zip_Code == tz]
+        fi_zip = str(r['Financial_Institution_Zip_Code']).strip()
+        if len(fi_zip) > 5:
+            RssdDict.loc[i,['Financial_Institution_Zip_Code']] = int(fi_zip[:5])
+        fi_name = r['Financial_Institution_Name']
+        #tz = r['Financial_Institution_Zip_Code'].strip()
+        fi_state = r['Financial_Institution_State'].strip().upper()
+        fi_city = r['Financial_Institution_City'].strip().upper()
+        
+        choices = RssdDict[RssdDict.Financial_Institution_Zip_Code == fi_zip]
         choiceStat='zip'
         if len(choices) == 0:
             choiceStat = 'CityState'
-            # print('BAD ZIP', zp, ct, st)
-            choices = RssdDict[((RssdDict.Financial_Institution_State == st) &
-                                (RssdDict.Financial_Institution_City == ct))]
+            # print('BAD ZIP', fi_zip, fi_city, fi_state)
+            choices = RssdDict[((RssdDict.Financial_Institution_State == fi_state) &
+                                (RssdDict.Financial_Institution_City == fi_city))]
             if len(choices) == 0:
                 # print('BAD CITY STATE')
                 choiceStat = 'State'
-                choices = RssdDict[RssdDict.Financial_Institution_State == st]
+                choices = RssdDict[RssdDict.Financial_Institution_State == fi_state]
 
-        fuzzr = process.extract(dbank, list(choices['Financial_Institution_Name']), limit=1)
+        fuzzr = process.extract(fi_name, list(choices['Financial_Institution_Name']), limit=1)
         if fuzzr[0][1] >= 90:
-            tdf = RssdDict[((RssdDict.Financial_Institution_Name == fuzzr[0][0]) &
-                          (RssdDict.Financial_Institution_State == st))]
-            BankDict.append([dbank,
+            try:
+                tdf = RssdDict[((RssdDict.Financial_Institution_Name == fuzzr[0][0]) &
+                            (RssdDict.Financial_Institution_City == fi_city) &
+                            (RssdDict.Financial_Institution_State == fi_state))]
+            except Exception as e:
+                print(f'Exception {e}. \nLength of tdf: {len(tdf)}\n{tdf}')    
+            BankDict.append([fi_name,
                              tdf['RSSD_ID'].item(),
-                             st,
+                             fi_state,
                              '',
                              tdf['Financial_Institution_Name'].item(),
                              tdf['Financial_Institution_Address'].item(),
-                             ct,
-                             tz])
+                             fi_city,
+                             fi_zip])
         else:
             fuzzr_old = fuzzr
-            adr = r['Address']
-            fuzzr = process.extract(adr, list(choices['Financial_Institution_Address']), limit=1)
+            fi_address = r['Address']
+            fuzzr = process.extract(fi_address, list(choices['Financial_Institution_Address']), limit=1)
             if fuzzr[0][1] >= 90:
 
                 tdf = RssdDict[((RssdDict.Financial_Institution_Address == fuzzr[0][0]) &
-                          (RssdDict.Financial_Institution_State == st))]
-                # print('ADR MATCH',tdf['Financial_Institution_Name'].item(), dbank, fuzzr[0][1])
+                          (RssdDict.Financial_Institution_State == fi_state))]
+                # print('ADDRESS MATCH',tdf['Financial_Institution_Name'].item(), dbank, fuzzr[0][1])
                 print('append address match')
-                BankDict.append([dbank,
+                BankDict.append([fi_name,
                                  tdf['RSSD_ID'].item(),
-                                 st,
+                                 fi_state,
                                  '',
                                  tdf['Financial_Institution_Name'].item(),
                                  tdf['Financial_Institution_Address'].item(),
-                                 ct,
-                                 tz])
+                                 fi_city,
+                                 fi_zip])
 
             else:
                 if fuzzr_old[0][1]>fuzzr[0][1]:
-                    print('BAD MATCH FAVOR NAME', dbank, fuzzr_old, choiceStat)
+                    print('BAD MATCH - FAVORS NAME', fi_name, fuzzr_old, choiceStat)
                 else:
-                    print('BAD MATCH FAVOR ADDR', dbank, fuzzr,tdf['Financial_Institution_Name'].item(), choiceStat)
+                    print('BAD MATCH - FAVORS ADDRESS', fi_name, fuzzr,tdf['Financial_Institution_Name'].item(), choiceStat)
 
-    wsio.WriteDataFrame(direc + direcDest, pd.DataFrame(BankDict,columns=['Bank',
+    wsio.WriteDataFrame(paths.folder_Orig + paths.filename_BankDim, pd.DataFrame(BankDict,columns=['Bank',
                                                'RSSD_ID',
                                                'State',
                                                'Class',
@@ -99,26 +107,28 @@ def GenBankDim():
                                                'Address',
                                                'City',
                                                'Zip']).applymap(str))
+    print(f'\t{paths.folder_Orig + paths.filename_BankDim}')
+    print(f'\t{i} records added to file')
 
 # Match Dad Bank Name to FDIC
-def MatchBankNames(input_file=direc + 'Bank_Dim.csv'):
-    datat = {'RSSD_ID':str,
+def MatchBankNames(input_file=paths.folder_Orig + paths.filename_BankDim):
+    rssd_dtypes = {'RSSD_ID':str,
               'FDIC_Certificate_Number':str,
               'OCC_Charter_Number':str,
               'OTS_Docket_Number':str,
               'Primary_ABA_Routing_Number':str,
               'Financial_Institution_Name': str,
               'Financial_Institution_Address': str,
-             'Financial_Institution_City': str,
-             'Financial_Institution_State': str,
-             'Financial_Institution_Zip_Code': str,
-             'Financial_Institution_Filing_Type': str,
-             'Last_Date/Time_Submission_Updated_On': dt.datetime}
-    RssdDict = wsio.ReadCSV(direc + 'RSSD_Dict', dtype = datat)
+              'Financial_Institution_City': str,
+              'Financial_Institution_State': str,
+              'Financial_Institution_Zip_Code': str,
+              'Financial_Institution_Filing_Type': str,
+              'Last_Date/Time_Submission_Updated_On': datetime.datetime}
+    RssdDict = wsio.ReadCSV(paths.localPath + paths.filename_RSSD, dtype = rssd_dtypes)
     if input_file == '':
         print('Please supply input file')
         return
-    datat = {'Bank':str,
+    bank_dtypes = {'Bank':str,
           'RSSD_ID':str,
           'State': str,
           'Class':str,
@@ -126,77 +136,79 @@ def MatchBankNames(input_file=direc + 'Bank_Dim.csv'):
           'Address': str,
           'City': str,
           'Zip': str}
-    ib = wsio.ReadCSV(direc + input_file, dtype = datat)
+    ib = wsio.ReadCSV(input_file, dtype = bank_dtypes)
     ib = ib[ib.RSSD_ID.isnull()]
     if len(ib) == 0:
         return 'All banks have RSSD_ID Match'
     # Make zip code 5 digits
     for i, r in RssdDict.iterrows():
-        zp = str(r['Financial_Institution_Zip_Code'])
-        if len(zp) > 5:
-            RssdDict.loc[i,['Financial_Institution_Zip_Code']] = int(zp[:5])
+        fi_zip = str(r['Financial_Institution_Zip_Code'])
+        if len(fi_zip) > 5:
+            RssdDict.loc[i,['Financial_Institution_Zip_Code']] = int(fi_zip[:5])
     return
 
+#FIGURE OUT THIS SECTION and whether it's necessary
+'''
     # Set up Bank Name lookup
     BankDict = []
     cnt = 0
     for i, r in ib.iterrows():
         cnt = cnt+1
-        dbank = r['Bank']
-        tz = r['Zip'].strip()
-        st = r['State'].strip().upper()
-        ct = r['City'].strip().upper()
-        choices = RssdDict[RssdDict.Financial_Institution_Zip_Code == tz]
+        fi_name = r['Bank']
+        fi_zip = r['Zip'].strip()
+        fi_state = r['State'].strip().upper()
+        fi_city = r['City'].strip().upper()
+        choices = RssdDict[RssdDict.Financial_Institution_Zip_Code == fi_zip]
         choiceStat='zip'
         if len(choices) == 0:
             choiceStat = 'CityState'
-            # print('BAD ZIP', zp, ct, st)
-            choices = RssdDict[((RssdDict.Financial_Institution_State == st) &
-                                (RssdDict.Financial_Institution_City == ct))]
+            # print('BAD ZIP', fi_zip, fi_city, fi_state)
+            choices = RssdDict[((RssdDict.Financial_Institution_State == fi_state) &
+                                (RssdDict.Financial_Institution_City == fi_city))]
             if len(choices) == 0:
                 # print('BAD CITY STATE')
                 choiceStat = 'State'
-                choices = RssdDict[RssdDict.Financial_Institution_State == st]
+                choices = RssdDict[RssdDict.Financial_Institution_State == fi_state]
 
-        fuzzr = process.extract(dbank, list(choices['Financial_Institution_Name']), limit=1)
+        fuzzr = process.extract(fi_name, list(choices['Financial_Institution_Name']), limit=1)
         if fuzzr[0][1] >= 90:
             tdf = RssdDict[((RssdDict.Financial_Institution_Name == fuzzr[0][0]) &
-                          (RssdDict.Financial_Institution_State == st))]
-            BankDict.append([dbank,
+                          (RssdDict.Financial_Institution_State == fi_state))]
+            BankDict.append([fi_name,
                              tdf['RSSD_ID'].item(),
-                             st,
+                             fi_state,
                              r['Class'],
                              tdf['Financial_Institution_Name'].item(),
                              tdf['Financial_Institution_Address'].item(),
-                             ct,
-                             tz])
+                             fi_city,
+                             fi_zip])
         else:
             fuzzr_old = fuzzr
-            adr = r['Address']
-            fuzzr = process.extract(adr, list(choices['Financial_Institution_Address']), limit=1)
+            fi_address = r['Address']
+            fuzzr = process.extract(fi_address, list(choices['Financial_Institution_Address']), limit=1)
             if fuzzr[0][1] >= 90:
 
                 tdf = RssdDict[((RssdDict.Financial_Institution_Address == fuzzr[0][0]) &
-                          (RssdDict.Financial_Institution_State == st))]
-                # print('ADR MATCH',tdf['Financial_Institution_Name'].item(), dbank, fuzzr[0][1])
+                          (RssdDict.Financial_Institution_State == fi_state))]
+                # print('ADR MATCH',tdf['Financial_Institution_Name'].item(), fi_name, fuzzr[0][1])
                 print('append address match')
-                BankDict.append([dbank,
+                BankDict.append([fi_name,
                                  tdf['RSSD_ID'].item(),
-                                 st,
+                                 fi_state,
                                  r['Class'],
                                  tdf['Financial_Institution_Name'].item(),
                                  tdf['Financial_Institution_Address'].item(),
-                                 ct,
-                                 tz])
+                                 fi_city,
+                                 fi_zip])
 
             else:
                 if fuzzr_old[0][1]>fuzzr[0][1]:
-                    print('BAD MATCH FAVOR NAME', dbank, fuzzr_old, choiceStat)
+                    print('BAD MATCH FAVOR NAME', fi_name, fuzzr_old, choiceStat)
                 else:
-                    print('BAD MATCH FAVOR ADDR', dbank, fuzzr,tdf['Financial_Institution_Name'].item(), choiceStat)
+                    print('BAD MATCH FAVOR ADDR', fi_name, fuzzr,tdf['Financial_Institution_Name'].item(), choiceStat)
 
 
-    ib = wsio.ReadCSV(direc + input_file, dtype = datat)
+    ib = wsio.ReadCSV(paths.localPath + input_file, dtype = dtypes)
     ib = ib[~ib.RSSD_ID.isnull()]
     rdlkp = pd.concat([pd.DataFrame(BankDict,columns=['Bank',
                                                'RSSD_ID',
@@ -206,172 +218,260 @@ def MatchBankNames(input_file=direc + 'Bank_Dim.csv'):
                                                'Address',
                                                'City',
                                                'Zip']).applymap(str),ib]).reset_index()
-    rd_lkp = rdlkp['Bank','RSSD_ID','State','Class','FDIC_Name','Address','City','Zip']
+    rssd_lkp = rdlkp['Bank','RSSD_ID','State','Class','FDIC_Name','Address','City','Zip']
 
     # Check for Missing FDIC Names if RSSD_ID exists
-    for i, r in rd_lkp.iterrows():
+    for i, r in rssd_lkp.iterrows():
         if pd.isnull(r['FDIC_Name']):
             tdf = RssdDict[RssdDict.RSSD_ID == str(r['RSSD_ID'])]
-            rd_lkp.loc[i,'FDIC_Name'] = tdf['Financial_Institution_Name'].item()
-    wsio.WriteDataFrame(direc+'Missing_FDIC_Name',rd_lkp)
-    return rd_lkp
+            rssd_lkp.loc[i,'FDIC_Name'] = tdf['Financial_Institution_Name'].item()
+    wsio.WriteDataFrame(paths.localPath + paths.filename_MissingName,rssd_lkp)
+    return rssd_lkp
+'''
+    
 
 # Initiate FFIEC SOAP Client
-def DownloadCallReports(ftype=[]):
-    if len(ftype) == 0:
+def InitiateSOAPClient()-> Client:
+    wsdl = paths.service_path
+    client = Client(wsdl=wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
+    return client
+
+
+# Get Filers from FFIEC As Of A Specific Date
+def RetrieveFilersSinceDate(client: Client, finlPeriod: str, lastUpdate_finlPeriod: str) -> list[int]:
+    if client:
+        pass
+    else:
+        client = InitiateSOAPClient()
+
+    errorList = []
+    try:
+        response = client.service.RetrieveFilersSinceDate(dataSeries = 'Call',
+                                                          reportingPeriodEndDate = finlPeriod,
+                                                          lastUpdateDateTime = lastUpdate_finlPeriod)
+    except:
+        errorList.append([finlPeriod, lastUpdate_finlPeriod])
+        print(errorList)
+
+    return(response)
+
+
+# Get Filers from FFIEC As Of A Specific Filing Date
+def RetrieveFilersSubmissionDateTime(client: Client,finlPeriod: str, lastUpdate_finlPeriod: str) -> list[int]:
+    if client:
+        pass
+    else:
+        client = InitiateSOAPClient()
+
+    errorList = []
+    try:
+        response = client.service.RetrieveFilersSubmissionDateTime(dataSeries = 'Call',
+                                                          reportingPeriodEndDate = finlPeriod,
+                                                          lastUpdateDateTime = lastUpdate_finlPeriod)
+    except:
+        errorList.append([finlPeriod, lastUpdate_finlPeriod])
+        print(errorList)
+
+    return(response)
+
+
+# Download Call Reports from FFIEC Service
+def DownloadCallReports(ftypes=[]):
+    if len(ftypes) == 0:
         print('Please Select a file type to Download PDF or XBRL')
         return
     else:
-        for i in ftype:
-            ftype[ftype.index(i)] = i.upper()
-            if i not in ['PDF','XBRL']:
-                ftype.remove(i)
-                print(i ,' is not a valid response')
-    rd_lkp = wsio.ReadCSV(direc+'RSSD_Dict')
-    bnk_dim = wsio.ReadCSV(direc+'Bank_Dim')
-    wsdl = 'https://cdr.ffiec.gov/public/pws/webservices/retrievalservice.asmx?WSDL'
-    client = Client(wsdl=wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
-    dlist = client.service.RetrieveReportingPeriods(dataSeries='Call')
+        for ftype in ftypes:
+            ftypes[ftypes.index(ftype)] = ftype.upper()
+            if ftype not in ['PDF','XBRL']:
+                ftypes.remove(ftype)
+                print(ftype ,' is not a valid response')
+    rssd_lkp = wsio.ReadCSV(paths.folder_Orig + paths.filename_RSSD)
+    bnk_dim = wsio.ReadCSV(paths.folder_Orig + paths.filename_BankDim)
+    
+    #wsdl = service_path
+    #client = Client(wsdl=wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
+    client = InitiateSOAPClient()
+    reporting_periods = client.service.RetrieveReportingPeriods(dataSeries='Call')
     errorList = []
 
-    ext = 'BulkReports/'
-
     if len(bnk_dim[pd.isnull(bnk_dim.RSSD_ID)]) != 0:
-        bnk_dim = MatchBankNames(direc+'Bank_Dim.csv')
+        bnk_dim = MatchBankNames(paths.localPath + paths.filename_BankDim)
 
-    rssd = bnk_dim['RSSD_ID'].drop_duplicates()
+    bnk_dim_rssds = bnk_dim['RSSD_ID'].drop_duplicates()
 
-    for rssdid in rssd:
-        print(rssdid)
+    for rssdid in bnk_dim_rssds:
         try:
-            bkn = rd_lkp[rd_lkp.RSSD_ID == rssdid]['Financial_Institution_Name'].item()
+            bkn = rssd_lkp[rssd_lkp.RSSD_ID == rssdid]['Financial_Institution_Name'].item()
         except:
             print('Invalid RSSD_ID or Multiple references in RSSD_DICT')
         fbkn = re.sub('[.,-/\&]','',bkn)
+        fbkn_forPath = fbkn + '_' + str(rssdid)
         locf = []
-        for i in ftype:
-            for f in glob.glob(direc + ext + fbkn + '/*.' + i):
+        for ftype in ftypes:
+            for f in glob.glob(paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/*.' + ftype):
                 locf.append(f)
 
-        # check for existing folder and popuplation
-
-        if len(dlist) == len(locf):
-            print('skipped folder', fbkn)
+        # check for existing folder and population
+        #REDO
+        if len(reporting_periods) == len(locf):
+            print(f'Already downloaded: {fbkn_forPath}')
             continue
-        elif not os.path.exists(direc + ext + fbkn + '_' + str(rssdid)):
-            os.makedirs(direc + ext + fbkn + '_' + str(rssdid))
-        fbkn = fbkn + '_' + str(rssdid)
-        for d in dlist:
-            fd = re.sub('[ -//]','',d)
-            fd=fd[len(fd)-4:]+fd[:len(fd)-4]
-            if len(fd) < 8:
-                fd = fd[:4] + '0' + fd[4:]
-            for ft in ftype:
-                fname = direc + ext  + fbkn + '/' + fbkn + '_' + fd + '.' + ft
+        elif not os.path.exists(paths.localPath + paths.folder_BulkReports + fbkn_forPath):
+            os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
+
+        print(f'\nDownloading: {fbkn_forPath}\n\t')
+
+        #Create empty skipped_df for each RSSD iteration
+        skipped_dtypes = {'Date': str,
+                          'As_of': str}
+                          #'As_of': datetime.datetime}
+        skipped_df = pd.DataFrame(columns=skipped_dtypes.keys())
+
+        #Check for Skipped file
+        skippedFile_path = paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/' + paths.filename_Skipped
+        if os.path.isfile(skippedFile_path):
+            skipped_df = wsio.ReadCSV(skippedFile_path, dtype=skipped_dtypes)
+            skipped_dates = skipped_df['Date'].values
+        else:
+            skipped_dates = []
+
+        for dt in [x for x in reporting_periods if x not in skipped_dates]:
+            #format dt for path to be YYYYMMDD from MM/DD/YYYY
+            fdt = re.sub('[ -//]','',dt)
+            fdt= fdt[len(fdt)-4:] + fdt[:len(fdt)-4]
+            if len(fdt) < 8:
+                fdt = fdt[:4] + '0' + fdt[4:]
+
+            for ftype in ftypes:
+                fname = paths.localPath + paths.folder_BulkReports  + fbkn_forPath + '/' + fbkn_forPath + '_' + fdt + '.' + ftype
 
                 if fname in locf:
-                     print('skipped date', fbkn, d)
+                     print(f'\t{dt}: already downloaded')
                      continue
-                print('try',rssdid, fbkn)
-
-
                 try:
                     response = client.service.RetrieveFacsimile(dataSeries = 'Call',
-                                                                reportingPeriodEndDate=d,
+                                                                reportingPeriodEndDate=dt,
                                                                 fiIDType='ID_RSSD',
                                                                 fiID = rssdid,
-                                                                facsimileFormat = ft)
-                except:
-                    errorList.append([fbkn, d, rssdid])
+                                                                facsimileFormat = ftype)
+                #except Exception as err:
+                except exceptions.Fault as fault:
+                    errorList.append([fbkn, dt, rssdid])
+                    #print(f'\tError Message: {fault.message}')
+
+                    if fault.code == 'Server.FacsimileNotFoundOrUnavailable':
+                        #Create skipped_df to track all records (dates) to skip in future without an api call
+                        skipped_df = pd.concat([skipped_df, pd.DataFrame({'Date': dt, 'As_of': datetime.datetime.now()}, index=[0])], ignore_index=True)                        
+                    elif fault.code == 'q0:Client.UserQuotaExceeded':
+                        print(f'\t{dt}: Error_code: {fault.code}\nQuitting...')
+                        exit()
+                    else:
+                        print(f'\t{dt}: Error_code: {fault.code}')
+                        break_process = input('Stop loader? (y/N): ')
+                        if break_process.lower() == 'y':
+                            exit()
                     continue
 
                 with open(fname, 'wb') as f:
                     f.write(response)
-                print('DOWNLOAD', fbkn, rssdid,fd)
+                print(f'\t{dt}: downloaded')
+        #Only write skipped file in RSSD_ID folder if skipped_df >0
+        if skipped_df.shape[0] >0:
+            wsio.WriteDataFrame(skippedFile_path, skipped_df)
     print(errorList)
     return
 
 
-def ParseXBRL(fpath):
+def ParseXBRL(filepath):
     # Parse XML
-    tree  = ET.parse(fpath)
+    tree  = ET.parse(filepath)
     root = tree.getroot()
 
-    rv = []
+    report_values = []
     for child in root:
         #print(child.tag, child.attrib)
         code = child.tag[child.tag.find('}')+1:]
         if len(code) == 8:
-            rv.append([code, child.text])
+            report_values.append([code, child.text])
 
-    rdf = pd.DataFrame(rv, columns = ['MDRM_Item','Value'])
-    cd = wsio.ReadCSV(direc+'MDRM_Dict')
-    tot=rdf.set_index('MDRM_Item').join(cd.set_index('MDRM_Item'))
+    parsed_df = pd.DataFrame(report_values, columns = ['MDRM_Item','Value'])
+    MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM)
+    full_df=parsed_df.set_index('MDRM_Item').join(MDRM_df.set_index('MDRM_Item'))
     #print(len(tot[pd.isnull(tot.Item_Name)]))
-    tot.reset_index(level=0, inplace=True)
-    return tot
+    full_df.reset_index(level=0, inplace=True)
+    return full_df
 
 
 def RenameFolders():
-    ext = 'BulkReports/'
-    #Rename folders
-    for f in glob.glob(direc+ext+'*'):
-        bnk = f[len(direc+ext):]
+    bnk_dim = wsio.ReadCSV(paths.folder_Orig + paths.filename_BankDim)
 
-        if '_' in bnk:
-            print(bnk, 'No Rename')
-            tdf = bnk_d[bnk_d.FDIC_Name == bnk[:bnk.rfind('_')]]
+    #Rename folders
+    for folder in glob.glob(paths.localPath + paths.folder_BulkReports + '*'):
+        bank = folder[len(paths.localPath + paths.folder_BulkReports):]
+
+        if '_' in bank:
+            print(bank, 'No Rename')
+            tdf = bnk_dim[bnk_dim.FDIC_Name == bank[:bank.rfind('_')]]
         else:
-            print(bnk, 'Rename')
-            tdf = bnk_d[bnk_d.FDIC_Name == bnk]
+            print(bank, 'Rename')
+            tdf = bnk_dim[bnk_dim.FDIC_Name == bank]
         trssd = tdf['RSSD_ID'].item()
-        if not str(trssd) in f:
-            os.rename(f, f + '_' + str(trssd))
+        if not str(trssd) in folder:
+            os.rename(folder, folder + '_' + str(trssd))
     return
 
 
-def GenBankMaster(direc = direc):
-    ext = 'BulkReports/'
-    for f in glob.glob(direc+ext+'*'):
-        bfn = f[len(direc+ext):]
-        bn = bfn[:bfn.rfind('_')]
-        rssd = bfn[bfn.rfind('_')+1:]
-        fname = f + '/' + rssd + '_master'
-        if os.path.isfile(fname):
+def GenBankMaster(path = paths.localPath + paths.folder_BulkReports):
+    print('Generate Bank Master:')
+    for folder in glob.glob(path + '*[!.]'):
+        fdf = pd.DataFrame()
+        bank_foldername = folder[len(path):]
+        bank_name = bank_foldername[:bank_foldername.rfind('_')]
+        rssd = bank_foldername[bank_foldername.rfind('_')+1:]
+        filepathname = folder + '/' + rssd + '_master'
+        if os.path.isfile(filepathname) and os.path.isdir(folder):
             continue
-        for cr in glob.glob(direc+ext+bfn+'/*.XBRL'):
-            d = cr[cr.rfind('_')+1:len(cr)-5]
-            d = dt.datetime.strptime(d, '%Y%m%d').date()
-            print(d, bn, rssd)
-            tdf = ParseXBRL(cr)
+        for call_report_name in glob.glob(path + bank_foldername + '/*.XBRL'):
+            period_date = call_report_name[call_report_name.rfind('_')+1:len(call_report_name)-5]
+            period_date = datetime.datetime.strptime(period_date, '%Y%m%d').date()
+            #print(period_date, bank_name, rssd)
+            tdf = ParseXBRL(call_report_name)
             #print(tdf)
-            tdf['ReportPeriodEndDate']=d
+            tdf['ReportPeriodEndDate']=period_date
             tdf['RSSD_ID'] = rssd
             tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Confidential','Value']]
             try:
                 fdf = pd.concat([fdf,tdf])
             except NameError:
                 fdf = tdf
-        print(fname)
-        wsio.WriteDataFrame(fname, fdf)
+        wsio.WriteDataFrame(filepathname, fdf)
+        print(f'\t{filepathname}')
         del fdf
     return
 
 
-def GenCallMaster(direc = direc):
-    ext = 'BulkReports/'
-    print(direc + ext + '*')
-    for fol in glob.glob(direc+ext+'*'):
-        print(fol)
-        rssd = fol[fol.rfind('_')+1:]
-        print(rssd)
-        for fi in glob.glob(fol+'/*_master.csv'):
-            tdf = wsio.ReadCSV(fi)
+def GenCallMaster(path = paths.localPath + paths.folder_BulkReports):
+    print('Generate Call Master:')
+    #print(path + '*')
+    for i, folder in enumerate(glob.glob(path + '*')):
+        rssd = folder[folder.rfind('_')+1:]
+        for file in glob.glob(folder + '/*_master.csv'):
+            tdf = wsio.ReadCSV(file)
             tdf['RSSD_ID'] = rssd
         try:
             fdf = pd.concat([fdf,tdf])
         except NameError:
             fdf = tdf
-    wsio.WriteDataFrame(direc+'MasterCall.csv', fdf)
+    wsio.WriteDataFrame(path + '../' + paths.filename_MasterCall, fdf)
+    print(f'\t{path + paths.filename_MasterCall}')
+    print(f'\t{i} records processed in file')
     return
 
+
+def load(path = paths.localPath + paths.filename_MasterCall) -> pd.DataFrame:
+    if os.path.isfile(path):
+        df = wsio.ReadCSV(path)
+    else:
+        df = None
+    return df

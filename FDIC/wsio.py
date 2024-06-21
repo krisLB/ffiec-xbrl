@@ -4,7 +4,7 @@ import os.path
 import dateutil
 import pandas as pd
 import csv
-from FDIC.constants import direc
+#from FDIC.constants import path
 
 
 def RemoveTrailingCommas(f=''):
@@ -35,15 +35,14 @@ def ReadCSV(f='', dt=False, dt_list=[], trail_comma=False, dtype=None):
     ext = f[len(f) - 4:].lower()
     if ext != '.csv':
         f = f + '.csv'
-
-
     if trail_comma is True:
         RemoveTrailingCommas(f)
+    
     try:
         df = pd.read_csv(f, index_col=False, quotechar='"', dtype=dtype)
     except:
-        print('possible bad row count, use trail_comma=True to remove all commas with a space on either side.')
-        RemoveTrailingCommas(f)
+        #print('possible bad row count, use trail_comma=True to remove all commas with a space on either side.')
+        print(f'Error reading file: {f}')
         df = pd.read_csv(f, index_col=False, quotechar='"', dtype=dtype)
 
     if len(dt_list) > 0:

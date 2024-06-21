@@ -4,7 +4,7 @@ import glob
 import time
 import FDIC.wsio as wsio
 import FDIC.ETL as ETL
-from FDIC.constants import direc
+import FDIC.constants as paths
 import shutil
 import pandas as pd
 
@@ -16,15 +16,15 @@ def ClearCache(li):
         print('No Cache Cleared')
         return
 
-    mc = wsio.ReadCSV(direc + 'MasterCall.csv')
-    nmc = mc[~mc.MDRM_Item.isin(li)]
-    wsio.WriteDataFrame(direc + 'MasterCall.csv', nmc)
+    mastercall = wsio.ReadCSV(paths.localPath + paths.filename_MasterCall)
+    new_mastercall = mastercall[~mastercall.MDRM_Item.isin(li)]
+    wsio.WriteDataFrame(paths.localPath + paths.filename_MasterCall, new_mastercall)
     print('Cache Cleared:', li)
     return
 
 
 # Fills MasterCall.csv for a specific bank
-# Every bank will have all calculations in cluded in ExhibitCalcs.csv
+# Every bank will have all calculations included in ExhibitCalcs.csv
 def FillMaster(rssd):
     # Aggregator
     def CalcBreakDown(li, ulist, tlist):
@@ -65,11 +65,11 @@ def FillMaster(rssd):
                  val]
         return rlist
 
-    mc = wsio.ReadCSV(direc + 'MasterCall.csv')
+    mc = wsio.ReadCSV(paths.localPath + 'MasterCall.csv')
 
     bmc = mc[mc.RSSD_ID == rssd]
     custrows = []
-    Ecalcs = wsio.ReadCSV(direc + 'ExhibitCalcs.csv')
+    Ecalcs = wsio.ReadCSV(paths.localPath + 'ExhibitCalcs.csv')
 
     for i, r in Ecalcs.iterrows():
         msli = r.MDRM_Item
@@ -90,8 +90,8 @@ def FillMaster(rssd):
 # Updates existing banks in MasterCall and new banks from Bank_Dim
 # cc allows for clearing calculations that have been updated in ExhibitCalc
 def UpdateCalls(cc=[]):
-    mc = wsio.ReadCSV(direc + 'MasterCall.csv')
-    bn_dim = wsio.ReadCSV(direc + 'Bank_Dim.csv')
+    mc = wsio.ReadCSV(paths.localPath + 'MasterCall.csv')
+    bn_dim = wsio.ReadCSV(paths.localPath + 'Bank_Dim.csv')
 
     ClearCache(cc)
     fmast = []
@@ -109,16 +109,16 @@ def UpdateCalls(cc=[]):
         fmast = fmast + FillMaster(rssd)
         print('FINISH: ', len(fmast))
     print(len(fmast))
-    wsio.WriteDataFrame(direc + 'MasterCall.csv', fmast, append=True)
+    wsio.WriteDataFrame(paths.localPath + 'MasterCall.csv', fmast, append=True)
     return fmast
 
 
 # Generates Master Exhibit Reference for easy Excel INDEX(MATCH()) Overwrites MasterExhibit every time
 def GenMasterExhibitReference():
-    mc = wsio.ReadCSV(direc + 'MasterCall.csv')
-    bd = wsio.ReadCSV(direc + 'Bank_Dim.csv')
+    mc = wsio.ReadCSV(paths.localPath + 'MasterCall.csv')
+    bd = wsio.ReadCSV(paths.localPath + 'Bank_Dim.csv')
     ndf = mc[mc.MDRM_Item.str.contains('LINE')]
     ndf = pd.merge(ndf, bd, how='inner', on='RSSD_ID')
     ndf = ndf[['ReportPeriodEndDate', 'RSSD_ID', 'FDIC_Name', 'State', 'City', 'MDRM_Item', 'Value']]
-    wsio.WriteDataFrame(direc + 'MasterExhibit.csv', ndf)
+    wsio.WriteDataFrame(paths.localPath + 'MasterExhibit.csv', ndf)
     return
