@@ -25,7 +25,7 @@ directory = 'e:/insights/data_sources/tmp/fdic/'
 
 
 ## Service Paths
-service_path = 'https://cdr.ffiec.gov/public/pws/webservices/retrievalservice.asmx?WSDL'
+WSDL_path = 'https://cdr.ffiec.gov/public/pws/webservices/retrievalservice.asmx?WSDL'
 
 
 ## Private Constants

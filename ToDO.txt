@@ -51,36 +51,24 @@ Build MasterCall Report
 
 
 ##GOALS
--Bank: View multi-fields, one period, by statement
--Bank: View multi-fields, multiple periods by statement
--Aggregates: view one-field, multiple periods
--Aggregates: common sized: view one-field, multiple periods
--Aggregates: common sized: view one-field, multiple periods charted
--Aggregates: view multi-fields, multiple periods by statement
--Aggregates: common sized: multi-fields, multiple periods by statement
+ -Bank: View multi-fields, one period, by statement
+ -Bank: View multi-fields, multiple periods by statement
+ -Aggregates: view one-field, multiple periods
+ -Aggregates: common sized: view one-field, multiple periods
+ -Aggregates: common sized: view one-field, multiple periods charted
+ -Aggregates: view multi-fields, multiple periods by statement
+ -Aggregates: common sized: multi-fields, multiple periods by statement
 
 -MDRM_Dict builder
 
 
-
-
-Create skipped file
-Enter date and timestamp
-
-
 Before DownloadCallReports:
- -Check if skipped file exists
- -Read file contents (dict?)
+x -Check if skipped file exists
+x -Read file contents (dict?)
  -Exclude dates from loop to avoid api calls for dates that match
 
 
 
-Check if Skipped file exists
-Read Skipped file
-Write Skipped file (create skipped file)
-
-
-
-
-os.path.isfile()
-
+x Check if Skipped file exists
+x -Read Skipped file
+x -Write Skipped file (create skipped file)
