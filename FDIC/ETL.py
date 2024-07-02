@@ -4,7 +4,7 @@ import FDIC.constants as paths
 from FDIC.constants_private import ffiec_un, ffiec_pw
 
 import pandas as pd
-from zeep import Client, xsd, exceptions
+from zeep import Client, exceptions #, xsd 
 from zeep.wsse.username import UsernameToken
 import re
 import os.path
@@ -12,9 +12,6 @@ import glob
 import xml.etree.ElementTree as ET
 import datetime
 import FDIC.wsio as wsio
-
-import time
-from functools import wraps
 
 
 class ZeepServiceProxy:
@@ -32,11 +29,13 @@ class ZeepServiceProxy:
         return wrapped_service_method
 
 
+
 class ETL:
 
     def __init__(self, wsdl, rate_limiter):
         self.client = Client(wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
         self.service = ZeepServiceProxy(self.client.service, rate_limiter)
+        self.rate_limiter = rate_limiter
 
 
     def GenBankDim(self):
@@ -267,7 +266,7 @@ class ETL:
 
         errorList = []
         try:
-            response = self.client.service.RetrieveFilersSinceDate(dataSeries = 'Call',
+            response = self.service.RetrieveFilersSinceDate(dataSeries = 'Call',
                                                             reportingPeriodEndDate = finlPeriod,
                                                             lastUpdateDateTime = lastUpdate_finlPeriod)
         except:
@@ -282,7 +281,7 @@ class ETL:
 
         errorList = []
         try:
-            response = self.client.service.RetrieveFilersSubmissionDateTime(dataSeries = 'Call',
+            response = self.service.RetrieveFilersSubmissionDateTime(dataSeries = 'Call',
                                                             reportingPeriodEndDate = finlPeriod,
                                                             lastUpdateDateTime = lastUpdate_finlPeriod)
         except:
@@ -294,6 +293,7 @@ class ETL:
 
     # Download Call Reports from FFIEC Service
     def DownloadCallReports(self, ftypes=[]):
+        outboundCount = 0
         if len(ftypes) == 0:
             print('Please Select a file type to Download PDF or XBRL')
             return
@@ -322,34 +322,31 @@ class ETL:
                 print('Invalid RSSD_ID or Multiple references in RSSD_DICT')
             fbkn = re.sub('[.,-/\&]','',bkn)
             fbkn_forPath = fbkn + '_' + str(rssdid)
-            locf = []
+            located = []
             for ftype in ftypes:
                 for f in glob.glob(paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/*.' + ftype):
-                    locf.append(f)
-
-            # check for existing folder and population
+                    located.append(f)
 
             #Create empty skipped_df for each RSSD iteration
             skipped_dtypes = {'Date': str,
                             'As_of': str}
-                            #'As_of': datetime.datetime}
             skipped_df = pd.DataFrame(columns=skipped_dtypes.keys())
             skippedFile_path = paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/' + paths.filename_Skipped
 
-            if len(reporting_periods) == len(locf):
+            if len(reporting_periods) == len(located):
                 print(f'Already downloaded: {fbkn_forPath}')
                 continue
             elif os.path.isfile(paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/' + paths.filename_Skipped):
                 skipped_df = wsio.ReadCSV(skippedFile_path, dtype=skipped_dtypes)
                 skipped_dates = skipped_df['Date'].values
                 skipped_len = len(skipped_dates)
-                if len(reporting_periods) == len(locf) + skipped_len:
+                if len(reporting_periods) == len(located) + skipped_len:
                     print(f'Already downloaded: {fbkn_forPath}')
                     continue
             elif not os.path.exists(paths.localPath + paths.folder_BulkReports + fbkn_forPath):
                 os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
 
-            print(f'\nDownloading: {fbkn_forPath}\n\t')
+            print(f'\nDownloading: {fbkn_forPath}')
 
             #Check for Skipped file  -- Consolidate w/ check above
             if os.path.isfile(skippedFile_path):
@@ -368,28 +365,27 @@ class ETL:
                 for ftype in ftypes:
                     fname = paths.localPath + paths.folder_BulkReports  + fbkn_forPath + '/' + fbkn_forPath + '_' + fdt + '.' + ftype
 
-                    if fname in locf:
+                    if fname in located:
                         print(f'\t{dt}: already downloaded')
                         continue
+                    outboundCount +=1
                     try:
-                        response = self.client.service.RetrieveFacsimile(dataSeries = 'Call',
+                        response = self.service.RetrieveFacsimile(dataSeries = 'Call',
                                                                     reportingPeriodEndDate=dt,
                                                                     fiIDType='ID_RSSD',
                                                                     fiID = rssdid,
                                                                     facsimileFormat = ftype)
-                    #except Exception as err:
                     except exceptions.Fault as fault:
                         errorList.append([fbkn, dt, rssdid])
                         #print(f'\tError Message: {fault.message}')
-
                         if fault.code == 'Server.FacsimileNotFoundOrUnavailable':
                             #Create skipped_df to track all records (dates) to skip in future without an api call
                             skipped_df = pd.concat([skipped_df, pd.DataFrame({'Date': dt, 'As_of': datetime.datetime.now()}, index=[0])], ignore_index=True)                        
                         elif fault.code == 'q0:Client.UserQuotaExceeded':
-                            print(f'\t{dt}: Error_code: {fault.code}\nQuitting...')
+                            print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved. Service paused until {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.\nQuitting...')
                             exit()
                         else:
-                            print(f'\t{dt}: Error_code: {fault.code}')
+                            print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved.')
                             break_process = input('Stop loader? (y/N): ')
                             if break_process.lower() == 'y':
                                 exit()
@@ -401,7 +397,8 @@ class ETL:
             #Only write skipped file in RSSD_ID folder if skipped_df >0
             if skipped_df.shape[0] >0:
                 wsio.WriteDataFrame(skippedFile_path, skipped_df)
-        print(errorList)
+        if errorList: print(f'Error List: {errorList}')
+        print(f'{outboundCount} records retrieved.')
         return
 
 
@@ -445,13 +442,18 @@ class ETL:
 
 
     def GenBankMaster(self, path = paths.localPath + paths.folder_BulkReports):
+        """
+        
+        """
+        instn_count, records_count = 0, 0
         print('Generate Bank Master:')
-        for folder in glob.glob(path + '*[!.]'):
+        for instn_count,folder in enumerate(glob.glob(path + '*[!.]')):
             fdf = pd.DataFrame()
             bank_foldername = folder[len(path):]
             bank_name = bank_foldername[:bank_foldername.rfind('_')]
             rssd = bank_foldername[bank_foldername.rfind('_')+1:]
             filepathname = folder + '/' + rssd + '_master'
+            #Only parse folders in path; skip all files
             if os.path.isfile(filepathname) and os.path.isdir(folder):
                 continue
             for call_report_name in glob.glob(path + bank_foldername + '/*.XBRL'):
@@ -467,16 +469,18 @@ class ETL:
                     fdf = pd.concat([fdf,tdf])
                 except NameError:
                     fdf = tdf
+                records_count +=1
             wsio.WriteDataFrame(filepathname, fdf)
             print(f'\t{filepathname}')
             del fdf
+        print(f'{records_count} records processed across {instn_count} institutions')
         return
 
 
     def GenCallMaster(self, path = paths.localPath + paths.folder_BulkReports):
         print('Generate Call Master:')
         #print(path + '*')
-        for i, folder in enumerate(glob.glob(path + '*')):
+        for instn_count, folder in enumerate(glob.glob(path + '*')):
             rssd = folder[folder.rfind('_')+1:]
             for file in glob.glob(folder + '/*_master.csv'):
                 tdf = wsio.ReadCSV(file)
@@ -487,7 +491,7 @@ class ETL:
                 fdf = tdf
         wsio.WriteDataFrame(path + '../' + paths.filename_MasterCall, fdf)
         print(f'\t{path + paths.filename_MasterCall}')
-        print(f'\t{i} records processed in file')
+        print(f'\t{instn_count} institutions processed in file')
         return
 
 
@@ -498,26 +502,3 @@ class ETL:
             df = None
         return df
 
-
-class RateLimiter:
-    def __init__(self, max_calls, period_in_seconds):
-        self.max_calls = max_calls
-        self.period = period_in_seconds
-        self.calls = []
-    
-    def __call__(self, func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            current_time = time.time()
-            self.calls = [call for call in self.calls if call > current_time - self.period]
-            
-            if len(self.calls) >= self.max_calls:
-                wait_time = self.calls[0] - (current_time - self.period)
-                time.sleep(wait_time)
-                current_time = time.time()
-                self.calls = [call for call in self.calls if call > current_time - self.period]
-
-            self.calls.append(current_time)
-            return func(*args, **kwargs)
-        
-        return wrapper

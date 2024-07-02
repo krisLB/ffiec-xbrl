@@ -1,9 +1,10 @@
 import time
 import os
 from datetime import datetime
+import constants as paths
 
 class Logger:
-    def __init__(self, log_file_path):
+    def __init__(self, log_file_path=paths.folder_Log + paths.filename_Log, mode='a'):
         """
         Initialize the Logger class with the log file path.
         """
