@@ -7,11 +7,11 @@ def main():
     etl = ETL(paths.WSDL_path, rate_limiter)
     
     # ExEngine.FillMaster('504713')
-    etl.GenBankDim()
-    etl.DownloadCallReports(['XBRL'])
+    #etl.GenBankDim()
+    #etl.DownloadCallReports(['XBRL'])
     etl.ParseXBRL()
-    etl.GenBankMaster()
-    etl.GenCallMaster()
+    #etl.GenBankMaster()
+    #etl.GenCallMaster()
 
 if __name__ == "__main__":
     main()

@@ -12,6 +12,12 @@ File Updater (Downloader)
 x -Skipped file, by instn, that tracks all periods unavailable from FFIEC to save requests
   -CRON or daily automation support for updater
 
+Updater
+  -GenBankMaster should not reprocess records that aren't dirty
+      -Creates bank log when bank folder is created
+      -Needs to track and detect dirty rows through bank_log files
+      -Log file that is added to when files are downloaded (dates)
+
 Viewer
  -Read formatted view schema
  -Load/populate formatted view schema
@@ -52,12 +58,12 @@ x -Print more detailed information for GenBankMaster
 x    -Eg.: 4255 records processed across 81 banks
 x    -Eg.: 81 banks processed
 x -Skip routine (Already downloaded Instn level and not doc level) should include counts of Skipped_df
-
+  -Create GenCallMaster method that just creates and loads df instead of creating file
 
 #BUGS
 x Update folder paths in ETL & ExEngine
 
-
+##-------------------------------------
 ##OVERALL_PROCESS
 Main:
  -Build Bank List

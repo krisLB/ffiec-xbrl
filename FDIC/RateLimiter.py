@@ -23,10 +23,11 @@ class RateLimiter:
             if len(self.calls) >= self.max_calls:
                 wait_time = self.calls[0] - (current_time - self.period)
                 if wait_time > 300:
-                    print(f'Rate limit hit: pausing for {wait_time / 60:.1f} minutes. Resume at {time.strftime("%Y.%m.%d %H:%M:%S",time.gmtime(self.calls[0] + 3600))}.')
-                    break_process = input('Stop loader? (y/N): ')
-                    if break_process.lower() == 'y':
-                        exit()
+                    print(f'Rate limit hit: pausing for {wait_time / 60:.1f} minutes. Resume at {time.strftime("%Y.%m.%d %H:%M:%S",time.localtime(self.calls[0] + 3600))}.')
+                    
+                    #break_process = input('Stop loader? (y/N): ')
+                    #@if break_process.lower() == 'y':
+                    #    exit()
                 else:
                     print(f'Rate limit hit: pausing for {wait_time} seconds')                    
                 time.sleep(wait_time)
@@ -37,3 +38,8 @@ class RateLimiter:
             return func(*args, **kwargs)
         
         return wrapper
+    
+
+    def wait(self, period_in_seconds=None):
+        wait_time = time.time() + (period_in_seconds or self.period)
+        print(f'Pausing for {wait_time / 60:.1f} minutes. Resume at {time.strftime("%Y.%m.%d %H:%M:%S",time.localtime(self.calls[0] + 3600))}.')

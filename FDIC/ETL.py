@@ -345,6 +345,8 @@ class ETL:
                     continue
             elif not os.path.exists(paths.localPath + paths.folder_BulkReports + fbkn_forPath):
                 os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
+                ##CREATE BANK_LOG FILE
+                
 
             print(f'\nDownloading: {fbkn_forPath}')
 
@@ -383,7 +385,7 @@ class ETL:
                             skipped_df = pd.concat([skipped_df, pd.DataFrame({'Date': dt, 'As_of': datetime.datetime.now()}, index=[0])], ignore_index=True)                        
                         elif fault.code == 'q0:Client.UserQuotaExceeded':
                             print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved. Service paused until {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.\nQuitting...')
-                            exit()
+                            self.rate_limiter.wait()
                         else:
                             print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved.')
                             break_process = input('Stop loader? (y/N): ')
@@ -403,6 +405,9 @@ class ETL:
 
 
     def ParseXBRL(self, filepath):
+        """
+
+        """
         # Parse XML
         tree  = ET.parse(filepath)
         root = tree.getroot()
@@ -423,6 +428,10 @@ class ETL:
 
 
     def RenameFolders(self):
+        """
+            UPDATE THIS        
+        """
+
         bnk_dim = wsio.ReadCSV(paths.folder_Orig + paths.filename_BankDim)
 
         #Rename folders
@@ -443,7 +452,7 @@ class ETL:
 
     def GenBankMaster(self, path = paths.localPath + paths.folder_BulkReports):
         """
-        
+        Consolidates qtrly call reports into a single bank-level file. File is saved to the bank specific folder as <RSSID>_master.csv 
         """
         instn_count, records_count = 0, 0
         print('Generate Bank Master:')
@@ -477,6 +486,21 @@ class ETL:
         return
 
 
+    def create_DF(self, path_root = paths.localPath + paths.folder_BulkReports):
+        print('Loading DF from CSVs:')
+        for instn_count, folder in enumerate(glob.glob(path_root + '*')):
+            rssd = folder[folder.rfind('_')+1:]
+            for file in glob.glob(folder + '/*_master.csv'):
+                tdf = wsio.ReadCSV(file)
+                tdf['RSSD_ID'] = rssd
+            try:
+                fdf = pd.concat([fdf,tdf])
+            except NameError:
+                fdf = tdf
+        print(f'\tDataframe loaded with {instn_count} institutions processed')
+        return fdf
+
+
     def GenCallMaster(self, path = paths.localPath + paths.folder_BulkReports):
         print('Generate Call Master:')
         #print(path + '*')
@@ -495,7 +519,7 @@ class ETL:
         return
 
 
-    def load(self, path = paths.localPath + paths.filename_MasterCall) -> pd.DataFrame:
+    def loadCSV(self, path = paths.localPath + paths.filename_MasterCall) -> pd.DataFrame:
         if os.path.isfile(path):
             df = wsio.ReadCSV(path)
         else:
