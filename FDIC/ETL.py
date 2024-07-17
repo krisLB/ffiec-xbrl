@@ -486,7 +486,7 @@ class ETL:
         return
 
 
-    def create_DF(self, path_root = paths.localPath + paths.folder_BulkReports):
+    def createDF_from_CSV(self, path_root = paths.localPath + paths.folder_BulkReports) -> pd.DataFrame:
         print('Loading DF from CSVs:')
         for instn_count, folder in enumerate(glob.glob(path_root + '*')):
             rssd = folder[folder.rfind('_')+1:]
