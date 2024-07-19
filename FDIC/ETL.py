@@ -6,12 +6,14 @@ from FDIC.constants_private import ffiec_un, ffiec_pw
 import pandas as pd
 from zeep import Client, exceptions #, xsd 
 from zeep.wsse.username import UsernameToken
+from requests.exceptions import ReadTimeout
 import re
 import os.path
 import glob
 import xml.etree.ElementTree as ET
 import datetime
 import FDIC.wsio as wsio
+import time
 
 
 class ZeepServiceProxy:
@@ -376,8 +378,9 @@ class ETL:
                                                                     reportingPeriodEndDate=dt,
                                                                     fiIDType='ID_RSSD',
                                                                     fiID = rssdid,
-                                                                    facsimileFormat = ftype)
+                                                                    facsimileFormat = ftype)                    
                     except exceptions.Fault as fault:
+                        # Handle SOAP Exceptions
                         errorList.append([fbkn, dt, rssdid])
                         #print(f'\tError Message: {fault.message}')
                         if fault.code == 'Server.FacsimileNotFoundOrUnavailable':
@@ -392,6 +395,19 @@ class ETL:
                             if break_process.lower() == 'y':
                                 exit()
                         continue
+                    except exceptions.Error as e:
+                        # Handle broader Zeep errors - Request Timeouts
+                        if e.__cause__ and isinstance(e.__cause__, ReadTimeout):
+                            # Handle the ReadTimeout exception specifically
+                            print(f"ReadTimeout occurred: {e.__cause__}")
+                            time.sleep(5)
+                            continue
+                        else:
+                            # Handle other zeep errors
+                            print(f"Zeep error occurred: {e}")
+                    except Exception as e:
+                        # Handle other exceptions
+                        print(f"An unexpected error occurred: {e}")
 
                     with open(fname, 'wb') as f:
                         f.write(response)
