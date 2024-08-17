@@ -68,7 +68,9 @@ class Viewer:
         # Perform calculation
         if calc.lower() == 'median':
             result = filtered_df.groupby('ReportPeriodEndDate')['Value'].median()
-        elif calc.lower() == 'aggregate':
+        elif calc.lower() == ('average' or 'mean'):
+            result = filtered_df.groupby('ReportPeriodEndDate')['Value'].mean()
+        elif calc.lower() == ('aggregate' or 'sum'):
             result = filtered_df.groupby('ReportPeriodEndDate')['Value'].sum()
         else:
             print(f'Calculation type "{calc}" not supported')

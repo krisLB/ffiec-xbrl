@@ -1,4 +1,8 @@
 #ENHANCEMENTS
+Search
+ -Find RSSDid by Financial_Institution_Name
+ -Find MDRM_Item by MDRM_Name
+
 
 RSSD Updater
  -RSSD_POR Downloader (grabs Bulk POR from taxonomy period)
@@ -13,14 +17,15 @@ x -Skipped file, by instn, that tracks all periods unavailable from FFIEC to sav
   -CRON or daily automation support for updater
 
 Updater
-  -GenBankMaster should not reprocess records that aren't dirty
-      -Creates bank log when bank folder is created
-      -Needs to track and detect dirty rows through bank_log files
-      -Log file that is added to when files are downloaded (dates)
+x  -GenBankMaster should not reprocess records that aren't dirty
+x      -Check modification date of XBRL files to compare to _master.csv
+  -MDRM_Dict Updater to Parse info during GenBankMaster
+
 
 Viewer
  -Read formatted view schema
  -Load/populate formatted view schema
+x -Bank: View one-field, multiple periods
  -Bank: View multi-fields, one period, by statement
  -Bank: View multi-fields, multiple periods by statement
  -Aggregates: view one-field, multiple periods
@@ -35,6 +40,13 @@ Reports
  -Field/Fields(#) by dates
 
 
+Metadata
+ -MDRM_Dict: Data_Field to Call_Report_schedule by Date mapping
+ -MDRM_Dict: Data_Field to Field_Type mapping
+ -MDRM_Dict: Parse_XBRL to also gather Report_Type, Report_Date, Schema_Location
+ -Field by Date mapping
+
+
 Logger
  -File based logs with all transaction details
  -Ability to pass logger object into rate_limiter and display/printer
@@ -46,11 +58,19 @@ x -Rate settings (volume and time)
 x -Rate logger
 x -Check rate logger before (past runs) and during each run
   -Log to txt file to log rate, counter, and timestamp to ensure future runs conform to policy
-  -Print Resume_downloads time
+x  -Print Resume_downloads time
 
 
 ETL
--MDRM_Dict builder
+ -MDRM_Dict builder
+
+
+DBMS
+ -Architecture: dbms by data item with metadata
+ -Insert process
+ -Verify process
+ -Update process
+
 
 
 GENERAL
@@ -58,7 +78,9 @@ x -Print more detailed information for GenBankMaster
 x    -Eg.: 4255 records processed across 81 banks
 x    -Eg.: 81 banks processed
 x -Skip routine (Already downloaded Instn level and not doc level) should include counts of Skipped_df
-  -Create GenCallMaster method that just creates and loads df instead of creating file
+x  -Create GenCallMaster method that just creates and loads df instead of creating file
+  -GenBankMaster needs updated to use ftypes and not hardcoded XBRL
+
 
 #BUGS
 x Update folder paths in ETL & ExEngine

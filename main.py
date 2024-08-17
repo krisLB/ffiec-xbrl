@@ -1,4 +1,5 @@
 from FDIC import ExEngine
+from FDIC.viewer import Viewer
 from FDIC.ETL import ETL, RateLimiter
 from FDIC import constants as paths
 
@@ -9,9 +10,14 @@ def main():
     # ExEngine.FillMaster('504713')
     #etl.GenBankDim()
     #etl.DownloadCallReports(['XBRL'])
+    
     etl.ParseXBRL()
     #etl.GenBankMaster()
     #etl.GenCallMaster()
+
+    etl.loadCSV()
+    viewer = Viewer()
+    viewer.query()
 
 if __name__ == "__main__":
     main()

@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import datetime
 import FDIC.wsio as wsio
 import time
+import numpy as np
 
 
 class ZeepServiceProxy:
@@ -59,7 +60,6 @@ class ETL:
 
         # Set up Bank Name lookup
         BankDict = []
-        cnt = 0
         
         print('Generate Bank Dictionary:')
         for i, r in RssdDict.iterrows():
@@ -349,7 +349,6 @@ class ETL:
                 os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
                 ##CREATE BANK_LOG FILE
                 
-
             print(f'\nDownloading: {fbkn_forPath}')
 
             #Check for Skipped file  -- Consolidate w/ check above
@@ -422,7 +421,7 @@ class ETL:
 
     def ParseXBRL(self, filepath):
         """
-
+        Parses Call Reports to extract all MDRM item and value from XBRL file
         """
         # Parse XML
         tree  = ET.parse(filepath)
@@ -466,6 +465,18 @@ class ETL:
         return
 
 
+    def get_latest_mod_date(self, path, file_search_pattern='*'):
+        """
+        Get the latest modification date of files in a directory.
+        """
+        latest_date = None
+        for file_path in glob.glob(path + file_search_pattern):
+            file_date = os.path.getmtime(file_path)
+            if latest_date is None or file_date > latest_date:
+                latest_date = file_date
+        return latest_date
+
+
     def GenBankMaster(self, path = paths.localPath + paths.folder_BulkReports):
         """
         Consolidates qtrly call reports into a single bank-level file. File is saved to the bank specific folder as <RSSID>_master.csv 
@@ -478,9 +489,17 @@ class ETL:
             bank_name = bank_foldername[:bank_foldername.rfind('_')]
             rssd = bank_foldername[bank_foldername.rfind('_')+1:]
             filepathname = folder + '/' + rssd + '_master'
-            #Only parse folders in path; skip all files
+            
+            #Skip all files, only parse folders in path
             if os.path.isfile(filepathname) and os.path.isdir(folder):
                 continue
+            
+            #Only process folders where one xbrl file has modification date later than _master.csv
+            date_master = self.get_latest_mod_date(path=folder, file_search_pattern='/*_master.csv')
+            date_xbrl = self.get_latest_mod_date(path=folder, file_search_pattern='/*.XBRL')
+            if (date_master and date_xbrl) and (date_master > date_xbrl):
+                continue
+
             for call_report_name in glob.glob(path + bank_foldername + '/*.XBRL'):
                 period_date = call_report_name[call_report_name.rfind('_')+1:len(call_report_name)-5]
                 period_date = datetime.datetime.strptime(period_date, '%Y%m%d').date()
@@ -520,7 +539,11 @@ class ETL:
     def GenCallMaster(self, path = paths.localPath + paths.folder_BulkReports):
         print('Generate Call Master:')
         #print(path + '*')
-        for instn_count, folder in enumerate(glob.glob(path + '*')):
+        folders = glob.glob(path + '*')
+        total_folders = len(folders)
+
+        for instn_count, folder in enumerate(folders):
+            print(f"\r\tProcessing record {instn_count} of {total_folders}", end='', flush=True)
             rssd = folder[folder.rfind('_')+1:]
             for file in glob.glob(folder + '/*_master.csv'):
                 tdf = wsio.ReadCSV(file)
@@ -542,3 +565,98 @@ class ETL:
             df = None
         return df
 
+
+    def build_bankDim(self, filepath_in = paths.localPath + paths.folder_RSSDs + '* POR *', filepath_out = paths.folder_Orig + paths.filename_RSSD):
+        """
+        Converts period based POR files from FFIEC into a single cleaned RSSD.csv file
+        """
+        #NEEDS TESTED!
+
+        dtypes = {'IDRSSD': np.dtype('str'),
+          'FDIC Certificate Number': np.dtype('str'),
+          'OCC Charter Number': np.dtype('str'),
+          'OTS Docket Number': np.dtype('str'),
+          'Primary ABA Routing Number': np.dtype('str'),
+          'Financial Institution Name': np.dtype('str'),
+          'Financial Institution Address': np.dtype('str'),
+          'Financial Institution City': np.dtype('str'),
+          'Financial Institution State': np.dtype('str'),
+          'Financial Institution Zip Code': np.dtype('str'),
+          'Financial Institution Filing Type': np.dtype('str'),
+          'Last Date/Time Submission Updated On': np.dtype('str')}
+
+        #Create blank dataframe
+        df = pd.DataFrame()
+
+        #Open csv files and import to dataframe
+        for filename in glob.glob(filepath_in):
+            with open(filename, 'r') as file:
+                df_new = pd.read_csv(filename, sep='\t', index_col=False, quotechar='"', dtype = dtypes, parse_dates=['Last Date/Time Submission Updated On'])
+            df = pd.concat([df, df_new])
+
+        #Clean RSSD_Por File - strip spaces for each field
+        df = df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
+
+        #Clean RSSD_Por Format
+        df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
+        df.columns = df.columns.str.replace(' ', '_')
+
+        #Create RSSD_Dict file
+        df.to_csv(filepath_out, sep=',', quotechar='"', index= False)
+
+
+
+    def build_MDRMdict(input_path =paths.localPath+paths.folder_MDRMs+paths.filename_MDRM_src, export_path =paths.folder_Orig + paths.filename_MDRM, filters=None):
+        """
+        Reads a CSV file, filters the DataFrame based on the given criteria, 
+        and exports the result to a new CSV file.
+
+        Parameters:
+        - input_path: str, path to the input CSV file.
+        - export_path: str, path where the filtered DataFrame should be saved.
+        - filters: dict, optional. A dictionary where keys are column names and values 
+                are lists of filter criteria.
+
+        Example:
+        build_MDRMdict(
+            input_path='path/to/MDRM_CSV.csv',
+            export_path='path/to/export/MDRM_dict.csv',
+            filters={'Reporting Form': ['FFIEC 031', 'FFIEC 041', 'FFIEC 051']})
+        """
+
+        def format_str_date(date_string):
+            try:
+                date_part = date_string.split()[0]
+                month, day, year = date_part.split('/')
+                return f"{year.zfill(4)}-{month.zfill(2)}-{day.zfill(2)}"
+                #df[['Formatted Start Date', 'Formatted End Date']] = df[['Start Date', 'End Date']].apply(lambda x: x.str.split().str[0].str.split('/').apply(lambda parts: f"{parts[2].zfill(4)}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"))
+            except:
+                return date_string
+
+        # Read the CSV file with headers starting on line 2
+        df = pd.read_csv(input_path, header=1, sep=',', quotechar='"') #, parse_dates=['Start Date', 'End Date'])
+        df.dropna(axis=1, how='all', inplace=True)
+
+        df[['Start Date', 'End Date']] = df.apply(lambda row: pd.Series([
+            format_str_date(row['Start Date']),
+            format_str_date(row['End Date'])]),
+            axis=1)
+        #df[['Start Date', 'End Date']] = df[['Start Date', 'End Date']].apply(lambda x: '-'.join(x.split()[0].split('/')[::-1]).zfill(10))
+
+        # Apply filters if provided
+        if filters:
+            for column, values in filters.items():
+                df = df[df[column].isin(values)]
+        
+        #Rename columns and format df to needed format and order
+        rename_columns={'Confidentiality':'Confidential',
+                        'ItemType':'Item Type',
+                        'SeriesGlossary':'Series Glossary'}
+        df.rename(columns=rename_columns, inplace=True)
+        df['MDRM_Item'] = df['Mnemonic'] + df['Item Code'].astype(str)
+        df = df[['MDRM_Item', 'Start Date', 'End Date', 'Item Name', 'Confidential', 'Reporting Form']]
+
+        # Export the filtered DataFrame to the specified export path
+        df.to_csv(export_path, index=False)
+
+    
