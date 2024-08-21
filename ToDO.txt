@@ -19,7 +19,10 @@ x -Skipped file, by instn, that tracks all periods unavailable from FFIEC to sav
 Updater
 x  -GenBankMaster should not reprocess records that aren't dirty
 x      -Check modification date of XBRL files to compare to _master.csv
-  -MDRM_Dict Updater to Parse info during GenBankMaster
+/  -MDRM_Dict Updater to Parse info during GenBankMaster
+   -Update GenBankMaster total stats message
+      -Current: 2353 records processed across 1000 institutions
+   -BankCallMaster to allow for Append or Refresh mode to save time on re-processing
 
 
 Viewer
@@ -62,7 +65,7 @@ x  -Print Resume_downloads time
 
 
 ETL
- -MDRM_Dict builder
+x -MDRM_Dict builder
 
 
 DBMS
@@ -80,10 +83,12 @@ x    -Eg.: 81 banks processed
 x -Skip routine (Already downloaded Instn level and not doc level) should include counts of Skipped_df
 x  -Create GenCallMaster method that just creates and loads df instead of creating file
   -GenBankMaster needs updated to use ftypes and not hardcoded XBRL
+  -ExhibitCalcs file
 
 
 #BUGS
-x Update folder paths in ETL & ExEngine
+x -Update folder paths in ETL & ExEngine
+  -Time printed on RateLimiter and when to resume.  Maybe not accounting for DST?
 
 ##-------------------------------------
 ##OVERALL_PROCESS

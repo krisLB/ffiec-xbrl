@@ -66,12 +66,17 @@ class Viewer:
                     filtered_df.loc[filtered_df['MDRM_Item'] == item, 'Value'] = filtered_df.loc[filtered_df['MDRM_Item'] == item, 'Value'].astype(item_type_map[item])
         
         # Perform calculation
-        if calc.lower() == 'median':
+        if calc.lower() in ('median'):
             result = filtered_df.groupby('ReportPeriodEndDate')['Value'].median()
-        elif calc.lower() == ('average' or 'mean'):
+        elif calc.lower() in ('average', 'mean'):
             result = filtered_df.groupby('ReportPeriodEndDate')['Value'].mean()
-        elif calc.lower() == ('aggregate' or 'sum'):
+        elif calc.lower() in ('aggregate', 'sum'):
             result = filtered_df.groupby('ReportPeriodEndDate')['Value'].sum()
+        elif calc.lower() in ('pct_chg', 'percent change', 'growth', 'mwr'):
+            result = filtered_df.groupby('ReportPeriodEndDate')['Value'].sum().pct_change()
+        elif calc.lower() in ('index', 'indexed', 'cumulative growth', 'twr'):
+            #Update to handle NaN/0 across periods
+            result = filtered_df.groupby('ReportPeriodEndDate')['Value'].sum().pct_change().add(1).cumprod()       
         else:
             print(f'Calculation type "{calc}" not supported')
             return
@@ -95,4 +100,82 @@ class Viewer:
         return formatted_result
 
 
+    def contentStats(self, item: str, by: str = None, as_percentage: bool = False):
+        """
+        Provides insight into the dataset by calculating the number or percentage of RSSD_ID or MDRM_Items.
 
+        Parameters:
+            item (str): The type of data to analyze ('RSSD_ID' or 'MDRM_Item').
+            by (str): The dimension to analyze by ('ReportPeriodEndDate' or None).
+            as_percentage (bool): Whether to return the results as percentages (default is False).
+        
+        Returns:
+            pandas.DataFrame: A dataframe with the count or percentage of the specified item.
+        """
+        # Convert column names to lowercase for comparison
+        columns_lower = {col.lower(): col for col in self.df.columns}
+
+        # Convert input parameters to lowercase for case-insensitive comparison
+        item = item.lower()
+        by = by.lower() if by else None
+
+        # Validate parameters
+        if item not in columns_lower or (by and by not in columns_lower):
+            print(f"Invalid 'item' or 'by' parameter. Available columns are: {list(self.df.columns)}")
+            return
+
+        # Map back to original case-sensitive column names
+        item_col = columns_lower[item]
+        by_col = columns_lower[by] if by else None
+
+        # Process RSSD_ID
+        if item == 'rssd_id':
+            if by is None:
+                # Total count or percentage of RSSD_IDs overall
+                total_count = self.df[item_col].nunique()
+                pvt = pd.DataFrame({item_col: [total_count]}, index=['Total'])
+                
+                if as_percentage:
+                    pvt[item_col] = 100.0  # If it's a subtotal, it represents 100%
+
+            elif by == 'reportperiodenddate':
+                # Count or percentage of RSSD_IDs by ReportPeriodEndDate
+                pvt = self.df[[by_col, item_col]].drop_duplicates().pivot_table(
+                    index=by_col,
+                    values=item_col,
+                    aggfunc='count'
+                ).sort_values(by=by_col, ascending=False)
+                
+                if as_percentage:
+                    total_rssd_ids = pvt[item_col].sum()
+                    pvt[item_col] = (pvt[item_col] / total_rssd_ids) * 100
+
+        # Process MDRM_Item
+        elif item == 'mdrm_item':
+            if by is None:
+                # Total count or percentage of MDRM_Items overall by RSSD_ID
+                total_count = self.df[item_col].nunique()
+                pvt = pd.DataFrame({item_col: [total_count]}, index=['Total'])
+                
+                if as_percentage:
+                    pvt[item_col] = 100.0  # If it's a subtotal, it represents 100%
+
+            elif by == 'reportperiodenddate':
+                # Count or percentage of MDRM_Items by ReportPeriodEndDate
+                pvt = self.df[[by_col, item_col]].drop_duplicates().pivot_table(
+                    index=by_col,
+                    values=item_col,
+                    aggfunc='count'
+                ).sort_values(by=by_col, ascending=False)
+                
+                if as_percentage:
+                    total_items = pvt[item_col].sum()
+                    pvt[item_col] = (pvt[item_col] / total_items) * 100
+
+        else:
+            print(f"Invalid 'item' parameter. Must be either 'RSSD_ID' or 'MDRM_Item'.")
+            return
+
+        pvt.fillna(0, inplace=True)
+        #print(pvt)
+        return pvt

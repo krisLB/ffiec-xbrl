@@ -295,7 +295,7 @@ class ETL:
 
     # Download Call Reports from FFIEC Service
     def DownloadCallReports(self, ftypes=[]):
-        outboundCount = 0
+
         if len(ftypes) == 0:
             print('Please Select a file type to Download PDF or XBRL')
             return
@@ -316,7 +316,8 @@ class ETL:
             bnk_dim = self.MatchBankNames(paths.localPath + paths.filename_BankDim)
 
         bnk_dim_rssds = bnk_dim['RSSD_ID'].drop_duplicates()
-
+        
+        skippedInstnCount, outboundInstnCount, outboundRecCount = 0, 0, 0
         for rssdid in bnk_dim_rssds:
             try:
                 bkn = rssd_lkp[rssd_lkp.RSSD_ID == rssdid]['Financial_Institution_Name'].item()
@@ -337,6 +338,7 @@ class ETL:
 
             if len(reporting_periods) == len(located):
                 print(f'Already downloaded: {fbkn_forPath}')
+                skippedInstnCount += 1
                 continue
             elif os.path.isfile(paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/' + paths.filename_Skipped):
                 skipped_df = wsio.ReadCSV(skippedFile_path, dtype=skipped_dtypes)
@@ -344,6 +346,7 @@ class ETL:
                 skipped_len = len(skipped_dates)
                 if len(reporting_periods) == len(located) + skipped_len:
                     print(f'Already downloaded: {fbkn_forPath}')
+                    skippedInstnCount += 1                    
                     continue
             elif not os.path.exists(paths.localPath + paths.folder_BulkReports + fbkn_forPath):
                 os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
@@ -358,6 +361,7 @@ class ETL:
             else:
                 skipped_dates = []
 
+            outboundInstnCount += 1
             for dt in [x for x in reporting_periods if x not in skipped_dates]:
                 #format dt for path to be YYYYMMDD from MM/DD/YYYY
                 fdt = re.sub('[ -//]','',dt)
@@ -371,7 +375,7 @@ class ETL:
                     if fname in located:
                         print(f'\t{dt}: already downloaded')
                         continue
-                    outboundCount +=1
+                    outboundRecCount +=1
                     try:
                         response = self.service.RetrieveFacsimile(dataSeries = 'Call',
                                                                     reportingPeriodEndDate=dt,
@@ -386,10 +390,13 @@ class ETL:
                             #Create skipped_df to track all records (dates) to skip in future without an api call
                             skipped_df = pd.concat([skipped_df, pd.DataFrame({'Date': dt, 'As_of': datetime.datetime.now()}, index=[0])], ignore_index=True)                        
                         elif fault.code == 'q0:Client.UserQuotaExceeded':
-                            print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved. Service paused until {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.\nQuitting...')
+                            print(f'\t{dt}: Error_code: {fault.code}\n')
+                            print(f'Service paused at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time).strftime("%Y.%m.%d %H:%M:%S")}. Service to resume at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.')
+                            print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
                             self.rate_limiter.wait()
                         else:
-                            print(f'\t{dt}: Error_code: {fault.code}\n{outboundCount} records retrieved.')
+                            print(f'\t{dt}: Error_code: {fault.code}')
+                            print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
                             break_process = input('Stop loader? (y/N): ')
                             if break_process.lower() == 'y':
                                 exit()
@@ -415,7 +422,7 @@ class ETL:
             if skipped_df.shape[0] >0:
                 wsio.WriteDataFrame(skippedFile_path, skipped_df)
         if errorList: print(f'Error List: {errorList}')
-        print(f'{outboundCount} records retrieved.')
+        print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
         return
 
 
@@ -603,10 +610,10 @@ class ETL:
 
         #Create RSSD_Dict file
         df.to_csv(filepath_out, sep=',', quotechar='"', index= False)
+        return
 
 
-
-    def build_MDRMdict(input_path =paths.localPath+paths.folder_MDRMs+paths.filename_MDRM_src, export_path =paths.folder_Orig + paths.filename_MDRM, filters=None):
+    def build_MDRMdict(self, input_path= paths.localPath+paths.folder_MDRMs+paths.filename_MDRM_src, export_path= paths.folder_Orig + paths.filename_MDRM, filters= None):
         """
         Reads a CSV file, filters the DataFrame based on the given criteria, 
         and exports the result to a new CSV file.
@@ -623,7 +630,6 @@ class ETL:
             export_path='path/to/export/MDRM_dict.csv',
             filters={'Reporting Form': ['FFIEC 031', 'FFIEC 041', 'FFIEC 051']})
         """
-
         def format_str_date(date_string):
             try:
                 date_part = date_string.split()[0]
@@ -649,12 +655,16 @@ class ETL:
                 df = df[df[column].isin(values)]
         
         #Rename columns and format df to needed format and order
-        rename_columns={'Confidentiality':'Confidential',
+        rename_columns={'Start Date':'Start_Date',
+                        'End Date':'End_Date',
+                        'Item Name':'Item_Name',
+                        'Confidentiality':'Confidential',
                         'ItemType':'Item Type',
+                        'Reporting Form':'Reporting_Forms',
                         'SeriesGlossary':'Series Glossary'}
         df.rename(columns=rename_columns, inplace=True)
         df['MDRM_Item'] = df['Mnemonic'] + df['Item Code'].astype(str)
-        df = df[['MDRM_Item', 'Start Date', 'End Date', 'Item Name', 'Confidential', 'Reporting Form']]
+        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential', 'Reporting_Forms']]
 
         # Export the filtered DataFrame to the specified export path
         df.to_csv(export_path, index=False)
