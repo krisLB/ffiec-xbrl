@@ -10,13 +10,15 @@ class Logger:
         """
         self.log_file_path = log_file_path
         self.buffer = []
+        self.mode = mode
 
-    def log_instantly(self, data):
+
+    def log_instantly(self, msg):
         """
         Log the given data instantly to the log file.
         """
         timestamp = self._get_timestamp()
-        log_entry = f"{timestamp}: {data}"
+        log_entry = f"{timestamp}: {msg}"
 
         self._write_to_file(log_entry)
 
@@ -48,5 +50,5 @@ class Logger:
         """
         Write the log entry to the log file.
         """
-        with open(self.log_file_path, "a") as log_file:
+        with open(self.log_file_path, self.mode) as log_file:
             log_file.write(f"{log_entry}\n")
