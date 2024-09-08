@@ -9,12 +9,14 @@ from zeep.wsse.username import UsernameToken
 from requests.exceptions import ReadTimeout
 import re
 import os.path
+import sys
 import glob
 import xml.etree.ElementTree as ET
 import datetime
-import FDIC.wsio as wsio
 import time
 import numpy as np
+#import FDIC.wsio as wsio
+from FDIC import wsio, Logger
 
 
 class ZeepServiceProxy:
@@ -35,10 +37,11 @@ class ZeepServiceProxy:
 
 class ETL:
 
-    def __init__(self, wsdl, rate_limiter):
+    def __init__(self, wsdl, rate_limiter, logger=None):
         self.client = Client(wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
         self.service = ZeepServiceProxy(self.client.service, rate_limiter)
         self.rate_limiter = rate_limiter
+        self.logger = logger
 
 
     def GenBankDim(self):
@@ -309,7 +312,19 @@ class ETL:
         bnk_dim = wsio.ReadCSV(paths.folder_Orig + paths.filename_BankDim)
         
         #client = self.InitiateSOAPClient()
-        reporting_periods = self.client.service.RetrieveReportingPeriods(dataSeries='Call')
+        try:
+            reporting_periods = self.client.service.RetrieveReportingPeriods(dataSeries='Call')
+        except exceptions.Fault as fault:
+            if fault.code == 'q0:Client.UserQuotaExceeded':
+                print(f'\t{dt}: Error_code: {fault.code}\n')
+                try:
+                    self.rate_limiter.wait(3600)
+                except KeyboardInterrupt: 
+                    print(f'User interrupted application.\n{msg}')
+                    if self.logger:
+                        self.logger.log_instantly(msg)
+                    sys.exit(1) 
+
         errorList = []
 
         if len(bnk_dim[pd.isnull(bnk_dim.RSSD_ID)]) != 0:
@@ -318,6 +333,7 @@ class ETL:
         bnk_dim_rssds = bnk_dim['RSSD_ID'].drop_duplicates()
         
         skippedInstnCount, outboundInstnCount, outboundRecCount = 0, 0, 0
+        incr_skippedInstnCount, incr_outboundInstnCount, incr_outboundRecCount = 0, 0, 0
         for rssdid in bnk_dim_rssds:
             try:
                 bkn = rssd_lkp[rssd_lkp.RSSD_ID == rssdid]['Financial_Institution_Name'].item()
@@ -338,7 +354,7 @@ class ETL:
 
             if len(reporting_periods) == len(located):
                 print(f'Already downloaded: {fbkn_forPath}')
-                skippedInstnCount += 1
+                skippedInstnCount +=1; incr_skippedInstnCount +=1
                 continue
             elif os.path.isfile(paths.localPath + paths.folder_BulkReports + fbkn_forPath + '/' + paths.filename_Skipped):
                 skipped_df = wsio.ReadCSV(skippedFile_path, dtype=skipped_dtypes)
@@ -346,7 +362,7 @@ class ETL:
                 skipped_len = len(skipped_dates)
                 if len(reporting_periods) == len(located) + skipped_len:
                     print(f'Already downloaded: {fbkn_forPath}')
-                    skippedInstnCount += 1                    
+                    skippedInstnCount +=1; incr_skippedInstnCount +=1                   
                     continue
             elif not os.path.exists(paths.localPath + paths.folder_BulkReports + fbkn_forPath):
                 os.makedirs(paths.localPath + paths.folder_BulkReports + fbkn_forPath)
@@ -361,7 +377,7 @@ class ETL:
             else:
                 skipped_dates = []
 
-            outboundInstnCount += 1
+            outboundInstnCount += 1; incr_outboundInstnCount +=1
             for dt in [x for x in reporting_periods if x not in skipped_dates]:
                 #format dt for path to be YYYYMMDD from MM/DD/YYYY
                 fdt = re.sub('[ -//]','',dt)
@@ -375,13 +391,16 @@ class ETL:
                     if fname in located:
                         print(f'\t{dt}: already downloaded')
                         continue
-                    outboundRecCount +=1
+                    outboundRecCount +=1; incr_outboundRecCount +=1
+                    msg = f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.'
+                    #msg_logger = f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.'
                     try:
                         response = self.service.RetrieveFacsimile(dataSeries = 'Call',
                                                                     reportingPeriodEndDate=dt,
                                                                     fiIDType='ID_RSSD',
                                                                     fiID = rssdid,
-                                                                    facsimileFormat = ftype)                    
+                                                                    facsimileFormat = ftype,
+                                                                    log_msg = msg)                    
                     except exceptions.Fault as fault:
                         # Handle SOAP Exceptions
                         errorList.append([fbkn, dt, rssdid])
@@ -391,15 +410,23 @@ class ETL:
                             skipped_df = pd.concat([skipped_df, pd.DataFrame({'Date': dt, 'As_of': datetime.datetime.now()}, index=[0])], ignore_index=True)                        
                         elif fault.code == 'q0:Client.UserQuotaExceeded':
                             print(f'\t{dt}: Error_code: {fault.code}\n')
-                            print(f'Service paused at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time).strftime("%Y.%m.%d %H:%M:%S")}. Service to resume at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.')
-                            print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
-                            self.rate_limiter.wait()
+                            #print(f'Service paused at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time).strftime("%Y.%m.%d %H:%M:%S")}. Service to resume at {datetime.datetime.fromtimestamp(self.rate_limiter.start_time + 3600).strftime("%Y.%m.%d %H:%M:%S")}.\n{msg}')
+                            try:
+                                self.rate_limiter.wait(3600)
+                            except KeyboardInterrupt:
+                            #except Exception:
+                            #except exceptions.Fault as rate_fault:    
+                                print(f'User interrupted application.\n{msg}')
+                                if self.logger:
+                                    self.logger.log_instantly(msg)
+                                sys.exit(1) 
                         else:
-                            print(f'\t{dt}: Error_code: {fault.code}')
-                            print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
+                            print(f'\t{dt}: Error_code: {fault.code}\n{msg}')
+                            if self.logger:
+                                self.logger.log_instantly(msg)
                             break_process = input('Stop loader? (y/N): ')
                             if break_process.lower() == 'y':
-                                exit()
+                                sys.exit(1)
                         continue
                     except exceptions.Error as e:
                         # Handle broader Zeep errors - Request Timeouts
@@ -407,6 +434,7 @@ class ETL:
                             # Handle the ReadTimeout exception specifically
                             print(f"ReadTimeout occurred: {e.__cause__}")
                             time.sleep(5)
+                            #ADD CODE TO HANDLE REPEAT CASES TO STOP INDEFINITE
                             continue
                         else:
                             # Handle other zeep errors
@@ -422,31 +450,81 @@ class ETL:
             if skipped_df.shape[0] >0:
                 wsio.WriteDataFrame(skippedFile_path, skipped_df)
         if errorList: print(f'Error List: {errorList}')
-        print(f'{skippedInstnCount} institutions reviewed.  {outboundRecCount} records retrieved across {outboundInstnCount} institutions.')
+        print(msg)
+        if self.logger:
+            self.logger.log_instantly(msg=msg)
         return
 
 
-    def ParseXBRL(self, filepath):
+    def ParseXBRL(self, filepath: str, allow_external_references: bool = True):
         """
         Parses Call Reports to extract all MDRM item and value from XBRL file
         """
+
+        def clean_xbrl_tag(text):
+            remove_text = [
+                            '{http://www.w3.org/1999/xlink}',
+                            '{http://www.xbrl.org/2003/linkbase}',
+                            '{http://www.xbrl.org/2003/instance}',
+                            '{http://www.ffiec.gov/xbrl/call/concepts}'
+                        ]
+            
+            for rt in remove_text:
+                text = text.replace(rt, "")
+            return text
+
+        xlink = '{http://www.w3.org/1999/xlink}'
+
         # Parse XML
         tree  = ET.parse(filepath)
         root = tree.getroot()
+        reporting_form = None
 
         report_values = []
         for child in root:
             #print(child.tag, child.attrib)
-            code = child.tag[child.tag.find('}')+1:]
-            if len(code) == 8:
-                report_values.append([code, child.text])
+            #code = child.tag[child.tag.find('}')+1:]
+            code = clean_xbrl_tag(child.tag)
 
-        parsed_df = pd.DataFrame(report_values, columns = ['MDRM_Item','Value'])
-        MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM)
-        full_df=parsed_df.set_index('MDRM_Item').join(MDRM_df.set_index('MDRM_Item'))
-        #print(len(tot[pd.isnull(tot.Item_Name)]))
-        full_df.reset_index(level=0, inplace=True)
-        return full_df
+            if code == 'schemaRef' and reporting_form is None:
+                #get attrib=href
+                #parse url for regex='report{0-9}*3'
+                attrib = child.attrib.get(xlink+'href')
+                if attrib:
+                    reporting_form = re.search(pattern=r'report\d{3}', string=attrib)
+                    reporting_form_str = reporting_form.group(0) if reporting_form else None
+
+            data_unit = child.attrib.get('unitRef')
+            data_decimals = child.attrib.get('decimals')
+            
+            #Infer datatype based on basic logic and value
+            if data_decimals:
+                if int(data_decimals) == 0:
+                    data_type = 'int'
+                elif int(data_decimals) >0:
+                    data_type = 'float'
+                else:
+                    raise TypeError()
+            elif (child.text and child.text.strip().lower() in ['true','false']):
+                data_type = 'bool'
+            else:
+                data_type = 'str'
+
+            #NEED SOMETHING MORE ROBUST TO CAPTURE VALUES HERE
+            if len(code) == 8:
+                report_values.append([code, child.text, data_type, data_unit, data_decimals, reporting_form_str])
+
+        parsed_df = pd.DataFrame(report_values, columns = ['MDRM_Item','Value','Datatype','Unit','Decimals', 'CallReport_Form'])
+        
+        if allow_external_references:
+            MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM)
+            full_df=parsed_df.set_index('MDRM_Item').join(MDRM_df.set_index('MDRM_Item'))
+            #print(len(tot[pd.isnull(tot.Item_Name)]))
+            full_df.reset_index(level=0, inplace=True)
+            return full_df
+        else:
+            return parsed_df
+
 
 
     def RenameFolders(self):
@@ -613,7 +691,13 @@ class ETL:
         return
 
 
-    def build_MDRMdict(self, input_path= paths.localPath+paths.folder_MDRMs+paths.filename_MDRM_src, export_path= paths.folder_Orig + paths.filename_MDRM, filters= None):
+    def get_MDRMdict_from_source(self):
+        #BUILD THIS METHOD
+        #https://www.federalreserve.gov/apps/mdrm/download_mdrm.htm
+        pass
+
+
+    def build_MDRMdict(self, input_path =paths.localPath+paths.folder_MDRMs+paths.filename_MDRM_src, export_path =paths.folder_Orig + paths.filename_MDRM, filters=None):
         """
         Reads a CSV file, filters the DataFrame based on the given criteria, 
         and exports the result to a new CSV file.
@@ -630,14 +714,47 @@ class ETL:
             export_path='path/to/export/MDRM_dict.csv',
             filters={'Reporting Form': ['FFIEC 031', 'FFIEC 041', 'FFIEC 051']})
         """
+
         def format_str_date(date_string):
             try:
                 date_part = date_string.split()[0]
                 month, day, year = date_part.split('/')
                 return f"{year.zfill(4)}-{month.zfill(2)}-{day.zfill(2)}"
-                #df[['Formatted Start Date', 'Formatted End Date']] = df[['Start Date', 'End Date']].apply(lambda x: x.str.split().str[0].str.split('/').apply(lambda parts: f"{parts[2].zfill(4)}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"))
             except:
                 return date_string
+
+
+        def build_datatypes_from_bankXBRL(folderpath_callReport):
+
+            bank_df = pd.DataFrame()    
+            if folderpath_callReport[-1:] == '/':
+                folderpath_callReport = folderpath_callReport[:-1]
+
+            bank_foldername = folderpath_callReport.rsplit('/',1)[-1]
+            rssd = bank_foldername[bank_foldername.rfind('_')+1:]
+            folders = glob.glob(folderpath_callReport + '/*')[:10]
+
+            for folder in folders:
+                for call_report_filename in glob.glob(folder + '/*.XBRL'):
+                    period_date = call_report_filename[call_report_filename.rfind('_')+1:len(call_report_filename)-5]
+                    period_date = datetime.datetime.strptime((call_report_filename[call_report_filename.rfind('_')+1:len(call_report_filename)-5]), '%Y%m%d').date()
+                    #print(period_date, bank_name, rssd)
+                    tb_df = self.ParseXBRL(call_report_filename, allow_external_references =False)
+                    #print(tdf)
+                    tb_df['ReportPeriodEndDate'] =period_date
+                    tb_df['RSSD_ID'] =rssd
+                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'ReportPeriodEndDate']] #, 'CallReport_Form']]
+                    try:
+                        #bank_df = pd.concat([bank_df,tb_df])
+                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item'], keep='first') #,'CallReport_Form'], keep='first')
+                    except NameError:
+                        bank_df = tb_df
+            
+            #Set types of merge item
+            bank_df = bank_df.astype(dtype={'MDRM_Item':'string'})
+
+            return bank_df
+
 
         # Read the CSV file with headers starting on line 2
         df = pd.read_csv(input_path, header=1, sep=',', quotechar='"') #, parse_dates=['Start Date', 'End Date'])
@@ -647,7 +764,6 @@ class ETL:
             format_str_date(row['Start Date']),
             format_str_date(row['End Date'])]),
             axis=1)
-        #df[['Start Date', 'End Date']] = df[['Start Date', 'End Date']].apply(lambda x: '-'.join(x.split()[0].split('/')[::-1]).zfill(10))
 
         # Apply filters if provided
         if filters:
@@ -660,13 +776,20 @@ class ETL:
                         'Item Name':'Item_Name',
                         'Confidentiality':'Confidential',
                         'ItemType':'Item Type',
-                        'Reporting Form':'Reporting_Forms',
+                        'Reporting Form':'MDRMReport_Form',
                         'SeriesGlossary':'Series Glossary'}
         df.rename(columns=rename_columns, inplace=True)
-        df['MDRM_Item'] = df['Mnemonic'] + df['Item Code'].astype(str)
-        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential', 'Reporting_Forms']]
+        df['MDRM_Item'] = (df['Mnemonic'] + df['Item Code'].astype(str)).astype(str)
+        #df = df.astype(dtype={'MDRM_Item':'string'})
+        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential']] #, 'MDRMReport_Form']]
+
+        #Get metadata from XBRL call reports
+        bank_df = build_datatypes_from_bankXBRL(folderpath_callReport =paths.localPath + paths.folder_BulkReports)
+        #Merge dataframes
+        merged_df = pd.merge(df, bank_df, how='right', on='MDRM_Item', left_index=False, right_index=False, suffixes=['_l', '_r']) 
 
         # Export the filtered DataFrame to the specified export path
-        df.to_csv(export_path, index=False)
-
-    
+        if export_path:
+            merged_df.to_csv(export_path, index=False)
+        else:
+            return merged_df

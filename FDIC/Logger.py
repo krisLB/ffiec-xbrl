@@ -1,7 +1,8 @@
 import time
 import os
 from datetime import datetime
-import constants as paths
+#import constants as paths
+import FDIC.constants as paths
 
 class Logger:
     def __init__(self, log_file_path=paths.folder_Log + paths.filename_Log, mode='a'):

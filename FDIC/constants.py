@@ -16,7 +16,7 @@ filename_MDRM_src = 'MDRM_CSV.csv'
 filename_MasterCall = 'MasterCall.csv'
 filename_MissingName = 'Missing_FDIC_Name.csv'
 filename_Skipped = 'Skipped.csv'
-filename_Log = 'log.txt'
+filename_Log = 'requests_log.txt'
 
 
 '''

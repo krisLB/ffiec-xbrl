@@ -39,21 +39,25 @@ x -Bank: View one-field, multiple periods
 
 
 Reports
- -Filer/Filers(#) by dates
- -Field/Fields(#) by dates
+x -Filer/Filers(#) by dates
+x -Field/Fields(#) by dates
 
 
 Metadata
+ -MDRM_Dict: Loader for MDRM_CSV (main source) file from FFIEC
  -MDRM_Dict: Data_Field to Call_Report_schedule by Date mapping
  -MDRM_Dict: Data_Field to Field_Type mapping
- -MDRM_Dict: Parse_XBRL to also gather Report_Type, Report_Date, Schema_Location
- -Field by Date mapping
+x -Parse_XBRL to also gather Report_Type, Report_Date, Schema_Location, DataType
+  -MDRM_Dict: Field classification (as provided in MDRM_CSV)
+x -Field by Date mapping
 
 
 Logger
  -File based logs with all transaction details
- -Ability to pass logger object into rate_limiter and display/printer
-
+x -Summary log with transaction totals
+x    -Needs to handle user quiting the application during rateLimit
+x -Ability to pass logger object into rate_limiter and display/printer
+ 
 
  RateLimiter (API)
 x -Rate counter
@@ -89,6 +93,10 @@ x  -Create GenCallMaster method that just creates and loads df instead of creati
 #BUGS
 x -Update folder paths in ETL & ExEngine
   -Time printed on RateLimiter and when to resume.  Maybe not accounting for DST?
+  -log_msg in RateLimiter doesn't reset after logging, so it doesn't show only incremental but rather cumulative results
+  -wsio writedataframe method incorrectly handles commas, omitting data
+
+
 
 ##-------------------------------------
 ##OVERALL_PROCESS
