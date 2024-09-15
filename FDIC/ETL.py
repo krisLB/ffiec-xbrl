@@ -139,6 +139,26 @@ class ETL:
         print(f'\t{i} records added to file')
 
 
+    def Gen_RSSDict_from_PORfiles(self, folderpath_input=paths.localPath + paths.folder_RSSDs + paths.filename_RSSD, filepath_output=paths.folder_Orig + paths.filename_RSSD):
+        #Clean RSSD_Por Format - Align with and Create RSSD_Dict.csv
+        
+        #Open File (Bank_dim from RSSD_Por)
+        for src in glob.glob(folderpath_input + '/* POR *'):
+        
+        #with open(filename, 'r') as file:
+            df = pd.read_csv(filepath_in + filename, sep='\t', index_col=False, quotechar='"', dtype = dtypes, parse_dates=['Last Date/Time Submission Updated On'])
+
+        #Clean RSSD_Por File
+        df = df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
+
+        df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
+        df.columns = df.columns.str.replace(' ', '_')
+
+        #Create RSSD_Dict file
+        df.to_csv(filepath_out + 'RSSD_Dict.csv', sep=',', quotechar='"', index= False)
+
+
+
     # Match Dad Bank Name to FDIC
     def MatchBankNames(self, input_file=paths.folder_Orig + paths.filename_BankDim):
         rssd_dtypes = {'RSSD_ID':str,
@@ -456,7 +476,7 @@ class ETL:
         return
 
 
-    def ParseXBRL(self, filepath: str, allow_external_references: bool = True):
+    def ParseXBRL(self, filepath: str, allow_external_references: bool = True, include_metadata_on_export=False):
         """
         Parses Call Reports to extract all MDRM item and value from XBRL file
         """
@@ -475,6 +495,11 @@ class ETL:
 
         xlink = '{http://www.w3.org/1999/xlink}'
 
+        if include_metadata_on_export:
+            columns = ['MDRM_Item','Value','Datatype','Unit','Decimals','Reporting_Form_Num']
+        else:
+            columns = ['MDRM_Item','Value']
+
         # Parse XML
         tree  = ET.parse(filepath)
         root = tree.getroot()
@@ -489,10 +514,11 @@ class ETL:
             if code == 'schemaRef' and reporting_form is None:
                 #get attrib=href
                 #parse url for regex='report{0-9}*3'
-                attrib = child.attrib.get(xlink+'href')
-                if attrib:
-                    reporting_form = re.search(pattern=r'report\d{3}', string=attrib)
+                xml_attrib = child.attrib.get(xlink+'href')
+                if xml_attrib:
+                    reporting_form = re.search(pattern=r'(report)(\d{3})', string=xml_attrib)
                     reporting_form_str = reporting_form.group(0) if reporting_form else None
+                    reporting_form_num = reporting_form.group(2) if reporting_form else None
 
             data_unit = child.attrib.get('unitRef')
             data_decimals = child.attrib.get('decimals')
@@ -512,13 +538,18 @@ class ETL:
 
             #NEED SOMETHING MORE ROBUST TO CAPTURE VALUES HERE
             if len(code) == 8:
-                report_values.append([code, child.text, data_type, data_unit, data_decimals, reporting_form_str])
+                if include_metadata_on_export:
+                    report_values.append([code, child.text, data_type, data_unit, data_decimals, reporting_form_num])
+                else:
+                    report_values.append([code, child.text])
 
-        parsed_df = pd.DataFrame(report_values, columns = ['MDRM_Item','Value','Datatype','Unit','Decimals', 'CallReport_Form'])
-        
+        parsed_df = pd.DataFrame(report_values, columns = columns)
+
+        #Add in MDRM items to current df
         if allow_external_references:
             MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM)
-            full_df=parsed_df.set_index('MDRM_Item').join(MDRM_df.set_index('MDRM_Item'))
+            MDRM_df.drop(axis=1, columns=['Datatype', 'Unit', 'Decimals'], inplace=True, errors='ignore')
+            full_df=parsed_df.set_index(['MDRM_Item', 'Reporting_Form_Num']).join(MDRM_df.set_index(['MDRM_Item','Reporting_Form_Num']))
             #print(len(tot[pd.isnull(tot.Item_Name)]))
             full_df.reset_index(level=0, inplace=True)
             return full_df
@@ -651,44 +682,44 @@ class ETL:
         return df
 
 
-    def build_bankDim(self, filepath_in = paths.localPath + paths.folder_RSSDs + '* POR *', filepath_out = paths.folder_Orig + paths.filename_RSSD):
+    def Gen_RSSDict_from_PORfiles(folderpath_input=paths.localPath + paths.folder_RSSDs, filepath_output=paths.folder_Orig + paths.filename_RSSD): 
         """
-        Converts period based POR files from FFIEC into a single cleaned RSSD.csv file
+        
+        
         """
-        #NEEDS TESTED!
-
         dtypes = {'IDRSSD': np.dtype('str'),
-          'FDIC Certificate Number': np.dtype('str'),
-          'OCC Charter Number': np.dtype('str'),
-          'OTS Docket Number': np.dtype('str'),
-          'Primary ABA Routing Number': np.dtype('str'),
-          'Financial Institution Name': np.dtype('str'),
-          'Financial Institution Address': np.dtype('str'),
-          'Financial Institution City': np.dtype('str'),
-          'Financial Institution State': np.dtype('str'),
-          'Financial Institution Zip Code': np.dtype('str'),
-          'Financial Institution Filing Type': np.dtype('str'),
-          'Last Date/Time Submission Updated On': np.dtype('str')}
+            'FDIC Certificate Number': np.dtype('str'),
+            'OCC Charter Number': np.dtype('str'),
+            'OTS Docket Number': np.dtype('str'),
+            'Primary ABA Routing Number': np.dtype('str'),
+            'Financial Institution Name': np.dtype('str'),
+            'Financial Institution Address': np.dtype('str'),
+            'Financial Institution City': np.dtype('str'),
+            'Financial Institution State': np.dtype('str'),
+            'Financial Institution Zip Code': np.dtype('str'),
+            'Financial Institution Filing Type': np.dtype('str'),
+            'Last Date/Time Submission Updated On': np.dtype('str')}
+        
+        f_df = pd.DataFrame()
+        
+        #Open File (Bank_dim from RSSD_Por)
+        for file in glob.glob(folderpath_input + '* POR *.txt'):
+            t_df = pd.read_csv(file, sep='\t', index_col=False, quotechar='"', dtype = dtypes) #, parse_dates=['Last Date/Time Submission Updated On'])
 
-        #Create blank dataframe
-        df = pd.DataFrame()
 
-        #Open csv files and import to dataframe
-        for filename in glob.glob(filepath_in):
-            with open(filename, 'r') as file:
-                df_new = pd.read_csv(filename, sep='\t', index_col=False, quotechar='"', dtype = dtypes, parse_dates=['Last Date/Time Submission Updated On'])
-            df = pd.concat([df, df_new])
+            #Clean RSSD_Por File
+            t_df = t_df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
 
-        #Clean RSSD_Por File - strip spaces for each field
-        df = df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
+            t_df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
+            t_df.columns = t_df.columns.str.replace(' ', '_')
 
-        #Clean RSSD_Por Format
-        df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
-        df.columns = df.columns.str.replace(' ', '_')
+            f_df = pd.concat([t_df, f_df])
 
-        #Create RSSD_Dict file
-        df.to_csv(filepath_out, sep=',', quotechar='"', index= False)
-        return
+        if filepath_output:
+            #Create RSSD_Dict file
+            f_df.to_csv(filepath_output, sep=',', quotechar='"', index= False)
+        else:
+            return f_df
 
 
     def get_MDRMdict_from_source(self):
@@ -738,20 +769,20 @@ class ETL:
                 for call_report_filename in glob.glob(folder + '/*.XBRL'):
                     period_date = call_report_filename[call_report_filename.rfind('_')+1:len(call_report_filename)-5]
                     period_date = datetime.datetime.strptime((call_report_filename[call_report_filename.rfind('_')+1:len(call_report_filename)-5]), '%Y%m%d').date()
-                    #print(period_date, bank_name, rssd)
-                    tb_df = self.ParseXBRL(call_report_filename, allow_external_references =False)
-                    #print(tdf)
+
+                    tb_df = self.ParseXBRL(call_report_filename, allow_external_references =False, include_metadata_on_export =True)
                     tb_df['ReportPeriodEndDate'] =period_date
-                    tb_df['RSSD_ID'] =rssd
-                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'ReportPeriodEndDate']] #, 'CallReport_Form']]
+                    #tb_df['RSSD_ID'] =rssd
+                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'ReportPeriodEndDate', 'Reporting_Form_Num']]
                     try:
                         #bank_df = pd.concat([bank_df,tb_df])
-                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item'], keep='first') #,'CallReport_Form'], keep='first')
+                        #bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item','Reporting_Form_Num'], keep='first')
+                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True)
                     except NameError:
                         bank_df = tb_df
             
             #Set types of merge item
-            bank_df = bank_df.astype(dtype={'MDRM_Item':'string'})
+            bank_df = bank_df.astype(dtype={'MDRM_Item':'string', 'Reporting_Form_Num':'string'})
 
             return bank_df
 
@@ -776,20 +807,23 @@ class ETL:
                         'Item Name':'Item_Name',
                         'Confidentiality':'Confidential',
                         'ItemType':'Item Type',
-                        'Reporting Form':'MDRMReport_Form',
+                        'Reporting Form':'Reporting_Form',
                         'SeriesGlossary':'Series Glossary'}
         df.rename(columns=rename_columns, inplace=True)
         df['MDRM_Item'] = (df['Mnemonic'] + df['Item Code'].astype(str)).astype(str)
+        df['Reporting_Form'] = df['Reporting_Form'].astype(str)
+        df['Reporting_Form_Num'] = df['Reporting_Form'].str[-3:].astype(str)
         #df = df.astype(dtype={'MDRM_Item':'string'})
-        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential']] #, 'MDRMReport_Form']]
+        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential', 'Reporting_Form_Num']] #, 'Reporting_Form']]
 
         #Get metadata from XBRL call reports
         bank_df = build_datatypes_from_bankXBRL(folderpath_callReport =paths.localPath + paths.folder_BulkReports)
         #Merge dataframes
-        merged_df = pd.merge(df, bank_df, how='right', on='MDRM_Item', left_index=False, right_index=False, suffixes=['_l', '_r']) 
+        
+        merged_df = pd.merge(left=df, right=bank_df, how='right', on=['MDRM_Item', 'Reporting_Form_Num'], left_index=False, right_index=False, suffixes=['_l', '_r']) 
 
         # Export the filtered DataFrame to the specified export path
         if export_path:
             merged_df.to_csv(export_path, index=False)
         else:
-            return merged_df
+            return merged_df, df, bank_df
