@@ -139,23 +139,40 @@ class ETL:
         print(f'\t{i} records added to file')
 
 
-    def Gen_RSSDict_from_PORfiles(self, folderpath_input=paths.localPath + paths.folder_RSSDs + paths.filename_RSSD, filepath_output=paths.folder_Orig + paths.filename_RSSD):
-        #Clean RSSD_Por Format - Align with and Create RSSD_Dict.csv
+    def Gen_RSSDict_from_PORfiles(self, folderpath_input=paths.localPath + paths.folder_RSSDs, filepath_output=paths.folder_Orig + paths.filename_RSSD): 
+        
+        dtypes = {'IDRSSD': np.dtype('str'),
+            'FDIC Certificate Number': np.dtype('str'),
+            'OCC Charter Number': np.dtype('str'),
+            'OTS Docket Number': np.dtype('str'),
+            'Primary ABA Routing Number': np.dtype('str'),
+            'Financial Institution Name': np.dtype('str'),
+            'Financial Institution Address': np.dtype('str'),
+            'Financial Institution City': np.dtype('str'),
+            'Financial Institution State': np.dtype('str'),
+            'Financial Institution Zip Code': np.dtype('str'),
+            'Financial Institution Filing Type': np.dtype('str'),
+            'Last Date/Time Submission Updated On': np.dtype('str')}
+        
+        f_df = pd.DataFrame()
         
         #Open File (Bank_dim from RSSD_Por)
-        for src in glob.glob(folderpath_input + '/* POR *'):
-        
-        #with open(filename, 'r') as file:
-            df = pd.read_csv(filepath_in + filename, sep='\t', index_col=False, quotechar='"', dtype = dtypes, parse_dates=['Last Date/Time Submission Updated On'])
+        for file in glob.glob(folderpath_input + '* POR *.txt'):
+            #Read file
+            t_df = pd.read_csv(file, sep='\t', index_col=False, quotechar='"', dtype = dtypes) #, parse_dates=['Last Date/Time Submission Updated On'])
+            #Clean RSSD_Por File
+            t_df = t_df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
+            #Update columns
+            t_df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
+            t_df.columns = t_df.columns.str.replace(' ', '_')
+            #Concat each df into full_df
+            f_df = pd.concat([t_df, f_df])
 
-        #Clean RSSD_Por File
-        df = df.apply(lambda x: x.str.strip() if x.dtype.name == 'object' else x, axis=0)
-
-        df.rename(columns={'IDRSSD': 'RSSD_ID'}, inplace=True)
-        df.columns = df.columns.str.replace(' ', '_')
-
-        #Create RSSD_Dict file
-        df.to_csv(filepath_out + 'RSSD_Dict.csv', sep=',', quotechar='"', index= False)
+        if filepath_output:
+            #Create RSSD_Dict file
+            f_df.to_csv(filepath_output, sep=',', quotechar='"', index= False)
+        else:
+            return f_df
 
 
 
