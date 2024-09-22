@@ -2,6 +2,7 @@ from fuzzywuzzy import fuzz, process
 #from FDIC.constants import folder_Orig, folder_Dest, path, service_path, filename_BankDim
 import FDIC.constants as paths
 from FDIC.constants_private import ffiec_un, ffiec_pw
+import FDIC.Databaser
 
 import pandas as pd
 from zeep import Client, exceptions #, xsd 
@@ -37,11 +38,12 @@ class ZeepServiceProxy:
 
 class ETL:
 
-    def __init__(self, wsdl, rate_limiter, logger=None):
+    def __init__(self, wsdl, rate_limiter, logger=None, db_handler=None):
         self.client = Client(wsdl, wsse=UsernameToken(ffiec_un,ffiec_pw))
         self.service = ZeepServiceProxy(self.client.service, rate_limiter)
         self.rate_limiter = rate_limiter
         self.logger = logger
+        self.db_handler = db_handler
 
 
     def GenBankDim(self):
@@ -513,9 +515,11 @@ class ETL:
         xlink = '{http://www.w3.org/1999/xlink}'
 
         if include_metadata_on_export:
-            columns = ['MDRM_Item','Value','Datatype','Unit','Decimals','Reporting_Form_Num']
+            xbrl_columns = ['MDRM_Item','Value','Datatype','Unit','Decimals','Reporting_Form_Num']
+            ##_MASTER.CSV contains these column headers
+            #columns = ['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Confidential','Value']
         else:
-            columns = ['MDRM_Item','Value']
+            xbrl_columns = ['MDRM_Item','Value']
 
         # Parse XML
         tree  = ET.parse(filepath)
@@ -560,13 +564,17 @@ class ETL:
                 else:
                     report_values.append([code, child.text])
 
-        parsed_df = pd.DataFrame(report_values, columns = columns)
+        parsed_df = pd.DataFrame(report_values, columns = xbrl_columns)
 
         #Add in MDRM items to current df
         if allow_external_references:
-            MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM)
+            MDRM_dtypes = {'MDRM_Item': str, 'Reporting_Form_Num':str}
+            MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM, dtype=MDRM_dtypes)
             MDRM_df.drop(axis=1, columns=['Datatype', 'Unit', 'Decimals'], inplace=True, errors='ignore')
-            full_df=parsed_df.set_index(['MDRM_Item', 'Reporting_Form_Num']).join(MDRM_df.set_index(['MDRM_Item','Reporting_Form_Num']))
+            MDRM_df['Reporting_Form_Num'] = MDRM_df['Reporting_Form_Num'].str.zfill(3)
+
+            #full_df=parsed_df.set_index(['MDRM_Item', 'Reporting_Form_Num']).join(MDRM_df.set_index(['MDRM_Item','Reporting_Form_Num']))
+            full_df = pd.merge(left=parsed_df, right=MDRM_df, on=['MDRM_Item', 'Reporting_Form_Num'], how='left')
             #print(len(tot[pd.isnull(tot.Item_Name)]))
             full_df.reset_index(level=0, inplace=True)
             return full_df
@@ -610,22 +618,28 @@ class ETL:
         return latest_date
 
 
-    def GenBankMaster(self, path = paths.localPath + paths.folder_BulkReports):
+    def GenBankMaster(self, base_path:str = paths.localPath + paths.folder_BulkReports, specific_paths:list = None):
         """
         Consolidates qtrly call reports into a single bank-level file. File is saved to the bank specific folder as <RSSID>_master.csv 
         """
         instn_count, records_count = 0, 0
         print('Generate Bank Master:')
-        for instn_count,folder in enumerate(glob.glob(path + '*[!.]')):
+        base_folders = [x for x in glob.glob(base_path + '*[!.]') if not(os.path.isfile(x))]
+        if specific_paths:
+            specific_folders = [os.path.abspath(specific_path) for specific_path in specific_paths]
+        folders = specific_folders or base_folders
+
+        for instn_count,folder in enumerate(folders):
             fdf = pd.DataFrame()
-            bank_foldername = folder[len(path):]
+            bank_foldername = folder[len(base_path):]
             bank_name = bank_foldername[:bank_foldername.rfind('_')]
             rssd = bank_foldername[bank_foldername.rfind('_')+1:]
-            filepathname = folder + '/' + rssd + '_master'
+            filepath_out = folder + '/' + rssd + '_master.csv'
             
+            ##REALLY NEEDED?  DELETE?
             #Skip all files, only parse folders in path
-            if os.path.isfile(filepathname) and os.path.isdir(folder):
-                continue
+            #if os.path.isfile(filepathname) and os.path.isdir(folder):
+            #    continue
             
             #Only process folders where one xbrl file has modification date later than _master.csv
             date_master = self.get_latest_mod_date(path=folder, file_search_pattern='/*_master.csv')
@@ -633,11 +647,13 @@ class ETL:
             if (date_master and date_xbrl) and (date_master > date_xbrl):
                 continue
 
-            for call_report_name in glob.glob(path + bank_foldername + '/*.XBRL'):
-                period_date = call_report_name[call_report_name.rfind('_')+1:len(call_report_name)-5]
+            #for call_report_name in glob.glob(base_path + bank_foldername + '/*.XBRL'):
+            filepaths = glob.glob(folder + '/*.XBRL')
+            for filepath in filepaths:
+                period_date = filepath[filepath.rfind('_')+1:len(filepath)-5]
                 period_date = datetime.datetime.strptime(period_date, '%Y%m%d').date()
                 #print(period_date, bank_name, rssd)
-                tdf = self.ParseXBRL(call_report_name)
+                tdf = self.ParseXBRL(filepath, allow_external_references=True, include_metadata_on_export=True)
                 #print(tdf)
                 tdf['ReportPeriodEndDate']=period_date
                 tdf['RSSD_ID'] = rssd
@@ -647,12 +663,39 @@ class ETL:
                 except NameError:
                     fdf = tdf
                 records_count +=1
-            wsio.WriteDataFrame(filepathname, fdf)
-            print(f'\t{filepathname}')
+            wsio.WriteDataFrame(filepath_out, fdf)
+            print(f'\t{filepath_out}')
             del fdf
-        print(f'{records_count} records processed across {instn_count} institutions')
+        print(f'{records_count} records processed across {instn_count +1} institutions')
         return
 
+
+    def GenBankMaster_to_db(self, path = paths.localPath + paths.folder_BulkReports):
+        """
+        Consolidates qtrly call reports into a single bank-level file. File is saved to the bank specific folder as <RSSID>_master.csv 
+        """
+        instn_count, records_count = 0, 0
+        print('Database Call Reports from Bank_Master:')
+        for instn_count,folder in enumerate(glob.glob(path + '*[!.]')):
+            bank_foldername = folder[len(path):]
+            bank_name = bank_foldername[:bank_foldername.rfind('_')]
+            rssd = bank_foldername[bank_foldername.rfind('_')+1:]
+            filepathname = folder + '/' + rssd + '_master.csv'
+            
+            #If folder is a folder and filepath is _master.csv file, then proceed 
+            if os.path.isfile(filepathname) and os.path.isdir(folder):               
+                #Only process folders where one xbrl file has modification date later than _master.csv
+                date_master = self.get_latest_mod_date(path=folder, file_search_pattern='/*_master.csv')
+                date_xbrl = self.get_latest_mod_date(path=folder, file_search_pattern='/*.XBRL')
+                if (date_master and date_xbrl) and (date_master > date_xbrl):
+                    b_df = pd.read_csv(filepathname, sep=',', quotechar='"')                
+                    self.db_handler.process_dataframe(b_df)
+                else:
+                    continue
+
+        print(f'{records_count} records processed across {instn_count} institutions')
+        return
+    
 
     def createDF_from_CSV(self, path_root = paths.localPath + paths.folder_BulkReports) -> pd.DataFrame:
         print('Loading DF from CSVs:')
@@ -788,13 +831,14 @@ class ETL:
                     period_date = datetime.datetime.strptime((call_report_filename[call_report_filename.rfind('_')+1:len(call_report_filename)-5]), '%Y%m%d').date()
 
                     tb_df = self.ParseXBRL(call_report_filename, allow_external_references =False, include_metadata_on_export =True)
-                    tb_df['ReportPeriodEndDate'] =period_date
+                    #tb_df['ReportPeriodEndDate'] =period_date
                     #tb_df['RSSD_ID'] =rssd
-                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'ReportPeriodEndDate', 'Reporting_Form_Num']]
+                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'Reporting_Form_Num']]
                     try:
                         #bank_df = pd.concat([bank_df,tb_df])
-                        #bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item','Reporting_Form_Num'], keep='first')
-                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True)
+                        #bank_df = pd.concat([bank_df,tb_df], ignore_index=True)
+                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item','Reporting_Form_Num'], keep='first')
+
                     except NameError:
                         bank_df = tb_df
             
@@ -823,14 +867,13 @@ class ETL:
                         'End Date':'End_Date',
                         'Item Name':'Item_Name',
                         'Confidentiality':'Confidential',
-                        'ItemType':'Item Type',
+                        'ItemType':'Item_Type',
                         'Reporting Form':'Reporting_Form',
                         'SeriesGlossary':'Series Glossary'}
         df.rename(columns=rename_columns, inplace=True)
         df['MDRM_Item'] = (df['Mnemonic'] + df['Item Code'].astype(str)).astype(str)
         df['Reporting_Form'] = df['Reporting_Form'].astype(str)
         df['Reporting_Form_Num'] = df['Reporting_Form'].str[-3:].astype(str)
-        #df = df.astype(dtype={'MDRM_Item':'string'})
         df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential', 'Reporting_Form_Num']] #, 'Reporting_Form']]
 
         #Get metadata from XBRL call reports

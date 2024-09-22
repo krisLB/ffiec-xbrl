@@ -16,3 +16,9 @@
 2024-09-09 17:32:21: 3474 institutions reviewed.  2451 records retrieved across 27 institutions.
 2024-09-12 12:06:12: 3500 institutions reviewed.  2451 records retrieved across 27 institutions.
 2024-09-12 15:20:03: 3526 institutions reviewed.  2451 records retrieved across 27 institutions.
+2024-09-16 11:44:15: 3552 institutions reviewed.  2451 records retrieved across 27 institutions.
+2024-09-17 12:52:29: 3578 institutions reviewed.  2451 records retrieved across 28 institutions.
+2024-09-17 15:46:11: 3605 institutions reviewed.  4901 records retrieved across 53 institutions.
+2024-09-18 14:47:20: 3657 institutions reviewed.  2451 records retrieved across 27 institutions.
+2024-09-19 12:27:24: 3683 institutions reviewed.  2451 records retrieved across 27 institutions.
+2024-09-19 15:13:41: 3709 institutions reviewed.  2451 records retrieved across 27 institutions.

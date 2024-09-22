@@ -1,14 +1,26 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum, Table
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import enum
+import os
+import pandas as pd
 
 Base = declarative_base()
 
-class ItemType(enum.Enum):
+class FinlType(enum.Enum):
     EOP = "End-of-Period"
     FLOW = "Flow"
+
+class ReportForm(enum.Enum):
+    FORM_031 = "031"
+    FORM_041 = "041"
+    FORM_051 = "051"
+
+field_report_form = Table('field_report_form', Base.metadata,
+    Column('field_id', Integer, ForeignKey('fields.id')),
+    Column('report_form', Enum(ReportForm))
+)
 
 class Institution(Base):
     __tablename__ = 'institutions'
@@ -25,6 +37,7 @@ class Report(Base):
     id = Column(Integer, primary_key=True)
     institution_id = Column(Integer, ForeignKey('institutions.id'), nullable=False)
     date = Column(DateTime, nullable=False)
+    form = Column(Enum(ReportForm), nullable=False)
     
     institution = relationship("Institution", back_populates="reports")
     data_points = relationship("DataPoint", back_populates="report")
@@ -36,8 +49,11 @@ class Field(Base):
     mdrm = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=False)
     description = Column(String)
+    definition = Column(String)
+    series_description = Column(String)
     data_type = Column(String, nullable=False)
-    item_type = Column(Enum(ItemType), nullable=False)
+    finl_type = Column(Enum(FinlType), nullable=False)
+    report_forms = relationship("ReportForm", secondary=field_report_form)
 
 class DataPoint(Base):
     __tablename__ = 'data_points'
@@ -54,7 +70,10 @@ class DataPoint(Base):
     field = relationship("Field")
 
 class DatabaseHandler:
-    def __init__(self, db_url):
+    def __init__(self, db_filepath):       
+        db_path = os.path.abspath(db_filepath)
+        db_url = f"sqlite:///{db_path}"
+
         self.engine = create_engine(db_url)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
@@ -66,17 +85,20 @@ class DatabaseHandler:
             session.commit()
             return institution.id
 
-    def add_report(self, institution_id, date):
+    def add_report(self, institution_id, date, form):
         with self.Session() as session:
-            report = Report(institution_id=institution_id, date=date)
+            report = Report(institution_id=institution_id, date=date, form=form)
             session.add(report)
             session.commit()
             return report.id
 
-    def add_field(self, mdrm, name, description, data_type, item_type):
+    def add_field(self, mdrm, name, description, definition, series_description, 
+                  data_type, finl_type, report_forms):
         with self.Session() as session:
             field = Field(mdrm=mdrm, name=name, description=description, 
-                          data_type=data_type, item_type=item_type)
+                          definition=definition, series_description=series_description,
+                          data_type=data_type, finl_type=finl_type)
+            field.report_forms = report_forms
             session.add(field)
             session.commit()
             return field.id
@@ -84,9 +106,9 @@ class DatabaseHandler:
     def add_data_point(self, report_id, field_id, value, as_of_date, start_date=None, end_date=None):
         with self.Session() as session:
             field = session.query(Field).get(field_id)
-            if field.item_type == ItemType.EOP and (start_date or end_date):
-                raise ValueError("EOP items should not have start or end dates")
-            if field.item_type == ItemType.FLOW and (not start_date or not end_date):
+            if field.finl_type == FinlType.EOP and (start_date or not end_date):
+                raise ValueError("EOP items must not have start dates")
+            if field.finl_type == FinlType.FLOW and (not start_date or not end_date):
                 raise ValueError("Flow items must have both start and end dates")
             
             data_point = DataPoint(report_id=report_id, field_id=field_id, value=value,
@@ -131,12 +153,75 @@ class DatabaseHandler:
         with self.Session() as session:
             return session.query(DataPoint).join(Field).filter(
                 DataPoint.report_id == report_id,
-                Field.item_type == ItemType.EOP
+                Field.finl_type == FinlType.EOP
             ).all()
 
     def get_flow_data_points(self, report_id):
         with self.Session() as session:
             return session.query(DataPoint).join(Field).filter(
                 DataPoint.report_id == report_id,
-                Field.item_type == ItemType.FLOW
+                Field.finl_type == FinlType.FLOW
             ).all()
+
+    def get_fields_by_report_form(self, report_form):
+        with self.Session() as session:
+            return session.query(Field).filter(Field.report_forms.contains(report_form)).all()
+        
+    def process_dataframe(self, df):
+        with self.Session() as session:
+            # Cache for institution and field IDs
+            institution_cache = {}
+            field_cache = {}
+
+            # Group by institution and date to create reports
+            for (rssd_id, report_date), group in df.groupby(['RSSD_ID', 'ReportPeriodEndDate']):
+                # Get or create institution
+                if rssd_id not in institution_cache:
+                    institution = self.db_handler.get_institution_by_rssd(rssd_id)
+                    if not institution:
+                        institution_id = self.db_handler.add_institution(f"Institution {rssd_id}", rssd_id)
+                    else:
+                        institution_id = institution.id
+                    institution_cache[rssd_id] = institution_id
+                else:
+                    institution_id = institution_cache[rssd_id]
+
+                # Create report
+                report_id = self.db_handler.add_report(institution_id, datetime.strptime(report_date, '%Y-%m-%d'), group['Form'].iloc[0])
+
+                # Process each row in the group
+                for _, row in group.iterrows():
+                    mdrm = row['MDRM']
+                    if mdrm not in field_cache:
+                        field = self.db_handler.get_field_by_mdrm(mdrm)
+                        if not field:
+                            field_id = self.db_handler.add_field(
+                                mdrm=mdrm,
+                                name=row['Field Name'],
+                                description=row['Description'],
+                                definition=row['Definition'],
+                                series_description=row['Series Description'],
+                                data_type=row['Data Type'],
+                                finl_type=FinlType.EOP if row['Finl Type'] == 'EOP' else FinlType.FLOW,
+                                report_forms=[ReportForm(form) for form in row['Report Forms'].split(',')]
+                            )
+                        else:
+                            field_id = field.id
+                        field_cache[mdrm] = field_id
+                    else:
+                        field_id = field_cache[mdrm]
+
+                    # Add data point
+                    try:
+                        self.db_handler.add_data_point(
+                            report_id=report_id,
+                            field_id=field_id,
+                            value=row['Value'],
+                            as_of_date=datetime.strptime(report_date, '%Y-%m-%d'),
+                            start_date=datetime.strptime(row['Start Date'], '%Y-%m-%d') if pd.notna(row['Start Date']) else None,
+                            end_date=datetime.strptime(row['End Date'], '%Y-%m-%d') if pd.notna(row['End Date']) else None
+                        )
+                    except ValueError as e:
+                        print(f"Error adding data point for MDRM {mdrm}: {str(e)}")
+
+            session.commit()
