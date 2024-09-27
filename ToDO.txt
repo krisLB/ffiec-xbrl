@@ -88,7 +88,7 @@ x -Skip routine (Already downloaded Instn level and not doc level) should includ
 x  -Create GenCallMaster method that just creates and loads df instead of creating file
   -GenBankMaster needs updated to use ftypes and not hardcoded XBRL
   -ExhibitCalcs file
-  -Add general paths to ETL.init
+  -Add general paths to ETL.init to reuse across all methods
 
 
 #BUGS

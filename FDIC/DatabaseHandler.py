@@ -1,10 +1,10 @@
+import os
+import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum, Table
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import enum
-import os
-import pandas as pd
 
 Base = declarative_base()
 
@@ -70,10 +70,10 @@ class DataPoint(Base):
     field = relationship("Field")
 
 class DatabaseHandler:
-    def __init__(self, db_filepath):       
-        db_path = os.path.abspath(db_filepath)
+    def __init__(self, folder_path, db_filename='call_reports.db'):
+        os.makedirs(folder_path, exist_ok=True)
+        db_path = os.path.abspath(os.path.join(folder_path, db_filename))
         db_url = f"sqlite:///{db_path}"
-
         self.engine = create_engine(db_url)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
@@ -166,7 +166,7 @@ class DatabaseHandler:
     def get_fields_by_report_form(self, report_form):
         with self.Session() as session:
             return session.query(Field).filter(Field.report_forms.contains(report_form)).all()
-        
+
     def process_dataframe(self, df):
         with self.Session() as session:
             # Cache for institution and field IDs
@@ -177,9 +177,9 @@ class DatabaseHandler:
             for (rssd_id, report_date), group in df.groupby(['RSSD_ID', 'ReportPeriodEndDate']):
                 # Get or create institution
                 if rssd_id not in institution_cache:
-                    institution = self.db_handler.get_institution_by_rssd(rssd_id)
+                    institution = self.get_institution_by_rssd(rssd_id)
                     if not institution:
-                        institution_id = self.db_handler.add_institution(f"Institution {rssd_id}", rssd_id)
+                        institution_id = self.add_institution(f"Institution {rssd_id}", rssd_id)
                     else:
                         institution_id = institution.id
                     institution_cache[rssd_id] = institution_id
@@ -187,15 +187,15 @@ class DatabaseHandler:
                     institution_id = institution_cache[rssd_id]
 
                 # Create report
-                report_id = self.db_handler.add_report(institution_id, datetime.strptime(report_date, '%Y-%m-%d'), group['Form'].iloc[0])
+                report_id = self.add_report(institution_id, datetime.strptime(report_date, '%Y-%m-%d'), group['Form'].iloc[0])
 
                 # Process each row in the group
                 for _, row in group.iterrows():
                     mdrm = row['MDRM']
                     if mdrm not in field_cache:
-                        field = self.db_handler.get_field_by_mdrm(mdrm)
+                        field = self.get_field_by_mdrm(mdrm)
                         if not field:
-                            field_id = self.db_handler.add_field(
+                            field_id = self.add_field(
                                 mdrm=mdrm,
                                 name=row['Field Name'],
                                 description=row['Description'],
@@ -213,7 +213,7 @@ class DatabaseHandler:
 
                     # Add data point
                     try:
-                        self.db_handler.add_data_point(
+                        self.add_data_point(
                             report_id=report_id,
                             field_id=field_id,
                             value=row['Value'],

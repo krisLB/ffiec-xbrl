@@ -8,6 +8,7 @@ folder_BulkReports = 'BulkReports/'
 folder_RSSDs = 'Src/RSSDs/'
 folder_MDRMs = 'Src/MDRMs/'
 folder_Taxonomies = 'Src/Taxonomies/'
+folder_db = 'db/'
 
 filename_BankDim = 'Bank_Dim.csv'
 filename_RSSD = 'RSSD_Dict.csv'
@@ -17,6 +18,7 @@ filename_MasterCall = 'MasterCall.csv'
 filename_MissingName = 'Missing_FDIC_Name.csv'
 filename_Skipped = 'Skipped.csv'
 filename_Log = 'requests_log.txt'
+filename_db = 'fdic.db'
 
 
 '''

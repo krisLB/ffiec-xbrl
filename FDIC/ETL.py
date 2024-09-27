@@ -2,7 +2,7 @@ from fuzzywuzzy import fuzz, process
 #from FDIC.constants import folder_Orig, folder_Dest, path, service_path, filename_BankDim
 import FDIC.constants as paths
 from FDIC.constants_private import ffiec_un, ffiec_pw
-import FDIC.Databaser
+
 
 import pandas as pd
 from zeep import Client, exceptions #, xsd 
@@ -17,7 +17,7 @@ import datetime
 import time
 import numpy as np
 #import FDIC.wsio as wsio
-from FDIC import wsio, Logger
+from FDIC import wsio
 
 
 class ZeepServiceProxy:
@@ -627,6 +627,8 @@ class ETL:
         base_folders = [x for x in glob.glob(base_path + '*[!.]') if not(os.path.isfile(x))]
         if specific_paths:
             specific_folders = [os.path.abspath(specific_path) for specific_path in specific_paths]
+        else:
+            specific_folders = None
         folders = specific_folders or base_folders
 
         for instn_count,folder in enumerate(folders):

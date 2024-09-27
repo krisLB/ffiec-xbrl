@@ -1,16 +1,13 @@
-from FDIC import ExEngine
-from FDIC import Viewer
-from FDIC.ETL import ETL
-from FDIC import RateLimiter, Logger
+from FDIC import DatabaseHandler, ETL, Logger, RateLimiter, Viewer, ETLtools
 from FDIC import constants as paths
-#import matplotlib.pyplot as plt
 
 
 def main():
     #Initialize base objects
-    rate_limiter = RateLimiter(max_calls=2500, period_in_seconds=3660) #~2.5k every 60min
-    logger = Logger()
-    etl = ETL(paths.WSDL_path, rate_limiter, logger)
+    rate_limiter = RateLimiter.RateLimiter(max_calls=2500, period_in_seconds=3660) #~2.5k every 60min
+    logger = Logger.Logger()
+    db_handler = DatabaseHandler.DatabaseHandler(paths.localPath + paths.folder_db + paths.filename_db)
+    etl = ETL.ETL(wsdl=paths.WSDL_path, rate_limiter=rate_limiter, logger=logger, db_handler=db_handler)
     
    
     #Build MDRM_Dict - only keep selected items by filtering on mnemonic
@@ -28,15 +25,19 @@ def main():
     
     # ExEngine.FillMaster('504713')
     
-    #Generate Bank Dimension
+    ## Generate Bank Dimension
     #etl.GenBankDim()
         
-    #Download Call Reports for Instns in Bank Dimension
+    ## Download Call Reports for Instns in Bank Dimension
     etl.DownloadCallReports(['XBRL'])
     
+    ## Generate master files for each bank
     #etl.GenBankMaster()
+
+    ## Generate master call file for entire population
     #etl.GenCallMaster()
 
+    ## Load data and query data to visualize
     #etl.loadCSV()
     #viewer = Viewer()
     #viewer.query()
