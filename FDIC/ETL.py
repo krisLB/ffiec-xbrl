@@ -489,7 +489,7 @@ class ETL:
             if skipped_df.shape[0] >0:
                 wsio.WriteDataFrame(skippedFile_path, skipped_df)
         if errorList: print(f'Error List: {errorList}')
-        print(msg)
+        if msg: print(msg)
         if self.logger:
             self.logger.log_instantly(msg=msg)
         return
@@ -659,7 +659,7 @@ class ETL:
                 #print(tdf)
                 tdf['ReportPeriodEndDate']=period_date
                 tdf['RSSD_ID'] = rssd
-                tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Confidential','Value']]
+                tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Reporting_Form_Num','Confidential', 'Value']]
                 try:
                     fdf = pd.concat([fdf,tdf])
                 except NameError:
@@ -690,7 +690,7 @@ class ETL:
                 date_master = self.get_latest_mod_date(path=folder, file_search_pattern='/*_master.csv')
                 date_xbrl = self.get_latest_mod_date(path=folder, file_search_pattern='/*.XBRL')
                 if (date_master and date_xbrl) and (date_master > date_xbrl):
-                    b_df = pd.read_csv(filepathname, sep=',', quotechar='"')                
+                    b_df = pd.read_csv(filepathname, sep=',', quotechar='"', dtype={'RSSD_ID':str, 'Reporting_Form_Num':str})                
                     self.db_handler.process_dataframe(b_df)
                 else:
                     continue
