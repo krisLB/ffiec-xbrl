@@ -12,7 +12,7 @@ import re
 import os.path
 import sys
 import glob
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ElementTree
 import datetime
 import time
 import numpy as np
@@ -505,7 +505,8 @@ class ETL:
                             '{http://www.w3.org/1999/xlink}',
                             '{http://www.xbrl.org/2003/linkbase}',
                             '{http://www.xbrl.org/2003/instance}',
-                            '{http://www.ffiec.gov/xbrl/call/concepts}'
+                            '{http://www.ffiec.gov/xbrl/call/concepts}',
+                            '{http://www.ffiec.gov/xbrl/concepts}'
                         ]
             
             for rt in remove_text:
@@ -515,16 +516,14 @@ class ETL:
         xlink = '{http://www.w3.org/1999/xlink}'
 
         if include_metadata_on_export:
-            xbrl_columns = ['MDRM_Item','Value','Datatype','Unit','Decimals','Reporting_Form_Num']
-            ##_MASTER.CSV contains these column headers
-            #columns = ['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Confidential','Value']
+            xbrl_columns = ['MDRM_Item','Value','Datatype','Unit','Decimals'] #,'Reporting_Form_Num']
         else:
             xbrl_columns = ['MDRM_Item','Value']
 
         # Parse XML
-        tree  = ET.parse(filepath)
+        tree  = ElementTree.parse(filepath)
         root = tree.getroot()
-        reporting_form = None
+        #reporting_form = None
 
         report_values = []
         for child in root:
@@ -532,14 +531,14 @@ class ETL:
             #code = child.tag[child.tag.find('}')+1:]
             code = clean_xbrl_tag(child.tag)
 
-            if code == 'schemaRef' and reporting_form is None:
-                #get attrib=href
-                #parse url for regex='report{0-9}*3'
-                xml_attrib = child.attrib.get(xlink+'href')
-                if xml_attrib:
-                    reporting_form = re.search(pattern=r'(report)(\d{3})', string=xml_attrib)
-                    reporting_form_str = reporting_form.group(0) if reporting_form else None
-                    reporting_form_num = reporting_form.group(2) if reporting_form else None
+            #if code == 'schemaRef' and reporting_form is None:
+            #    #get attrib=href
+            #    #parse url for regex='report{0-9}*3'
+            #    xml_attrib = child.attrib.get(xlink+'href')
+            #    if xml_attrib:
+            #        reporting_form = re.search(pattern=r'(report)(\d{3})', string=xml_attrib)
+            #        reporting_form_str = reporting_form.group(0) if reporting_form else None
+            #        reporting_form_num = reporting_form.group(2) if reporting_form else None
 
             data_unit = child.attrib.get('unitRef')
             data_decimals = child.attrib.get('decimals')
@@ -560,7 +559,7 @@ class ETL:
             #NEED SOMETHING MORE ROBUST TO CAPTURE VALUES HERE
             if len(code) == 8:
                 if include_metadata_on_export:
-                    report_values.append([code, child.text, data_type, data_unit, data_decimals, reporting_form_num])
+                    report_values.append([code, child.text, data_type, data_unit, data_decimals]) #, reporting_form_num])
                 else:
                     report_values.append([code, child.text])
 
@@ -568,13 +567,14 @@ class ETL:
 
         #Add in MDRM items to current df
         if allow_external_references:
-            MDRM_dtypes = {'MDRM_Item': str, 'Reporting_Form_Num':str}
+            MDRM_dtypes = {'MDRM_Item': str} #, 'Reporting_Form_Num':str}
             MDRM_df = wsio.ReadCSV(paths.folder_Orig + paths.filename_MDRM, dtype=MDRM_dtypes)
             MDRM_df.drop(axis=1, columns=['Datatype', 'Unit', 'Decimals'], inplace=True, errors='ignore')
-            MDRM_df['Reporting_Form_Num'] = MDRM_df['Reporting_Form_Num'].str.zfill(3)
+            #MDRM_df['Reporting_Form_Num'] = MDRM_df['Reporting_Form_Num'].str.zfill(3)
 
             #full_df=parsed_df.set_index(['MDRM_Item', 'Reporting_Form_Num']).join(MDRM_df.set_index(['MDRM_Item','Reporting_Form_Num']))
-            full_df = pd.merge(left=parsed_df, right=MDRM_df, on=['MDRM_Item', 'Reporting_Form_Num'], how='left')
+            #full_df = pd.merge(left=parsed_df, right=MDRM_df, on=['MDRM_Item', 'Reporting_Form_Num'], how='left')
+            full_df = pd.merge(left=parsed_df, right=MDRM_df, on=['MDRM_Item'], how='left')
             #print(len(tot[pd.isnull(tot.Item_Name)]))
             full_df.reset_index(level=0, inplace=True)
             return full_df
@@ -659,7 +659,8 @@ class ETL:
                 #print(tdf)
                 tdf['ReportPeriodEndDate']=period_date
                 tdf['RSSD_ID'] = rssd
-                tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Reporting_Form_Num','Confidential', 'Value']]
+                #tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Reporting_Form_Num','Confidential', 'Value']]
+                tdf = tdf[['ReportPeriodEndDate','RSSD_ID','Item_Name','MDRM_Item','Confidential', 'Value']]                
                 try:
                     fdf = pd.concat([fdf,tdf])
                 except NameError:
@@ -835,18 +836,19 @@ class ETL:
                     tb_df = self.ParseXBRL(call_report_filename, allow_external_references =False, include_metadata_on_export =True)
                     #tb_df['ReportPeriodEndDate'] =period_date
                     #tb_df['RSSD_ID'] =rssd
-                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'Reporting_Form_Num']]
+                    #tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals', 'Reporting_Form_Num']]
+                    tb_df = tb_df[['MDRM_Item','Datatype','Unit','Decimals']]
                     try:
                         #bank_df = pd.concat([bank_df,tb_df])
                         #bank_df = pd.concat([bank_df,tb_df], ignore_index=True)
-                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item','Reporting_Form_Num'], keep='first')
-
+                        #bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item','Reporting_Form_Num'], keep='first')
+                        bank_df = pd.concat([bank_df,tb_df], ignore_index=True).drop_duplicates(['MDRM_Item'], keep='first')
                     except NameError:
                         bank_df = tb_df
             
             #Set types of merge item
-            bank_df = bank_df.astype(dtype={'MDRM_Item':'string', 'Reporting_Form_Num':'string'})
-
+            #bank_df = bank_df.astype(dtype={'MDRM_Item':'string', 'Reporting_Form_Num':'string'})
+            bank_df = bank_df.astype(dtype={'MDRM_Item':'string'})
             return bank_df
 
 
@@ -870,19 +872,20 @@ class ETL:
                         'Item Name':'Item_Name',
                         'Confidentiality':'Confidential',
                         'ItemType':'Item_Type',
-                        'Reporting Form':'Reporting_Form',
+                        #'Reporting Form':'Reporting_Form',
                         'SeriesGlossary':'Series Glossary'}
         df.rename(columns=rename_columns, inplace=True)
         df['MDRM_Item'] = (df['Mnemonic'] + df['Item Code'].astype(str)).astype(str)
-        df['Reporting_Form'] = df['Reporting_Form'].astype(str)
-        df['Reporting_Form_Num'] = df['Reporting_Form'].str[-3:].astype(str)
-        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential', 'Reporting_Form_Num']] #, 'Reporting_Form']]
+        #df['Reporting_Form'] = df['Reporting_Form'].astype(str)
+        #df['Reporting_Form_Num'] = df['Reporting_Form'].str[-3:].astype(str)
+        df = df[['MDRM_Item', 'Start_Date', 'End_Date', 'Item_Name', 'Confidential']] #, 'Reporting_Form_Num']] #, 'Reporting_Form']]
 
         #Get metadata from XBRL call reports
         bank_df = build_datatypes_from_bankXBRL(folderpath_callReport =paths.localPath + paths.folder_BulkReports)
         #Merge dataframes
         
-        merged_df = pd.merge(left=df, right=bank_df, how='right', on=['MDRM_Item', 'Reporting_Form_Num'], left_index=False, right_index=False, suffixes=['_l', '_r']) 
+        #merged_df = pd.merge(left=df, right=bank_df, how='right', on=['MDRM_Item', 'Reporting_Form_Num'], left_index=False, right_index=False, suffixes=['_l', '_r']) 
+        merged_df = pd.merge(left=df, right=bank_df, how='right', on=['MDRM_Item'], left_index=False, right_index=False, suffixes=['_l', '_r']) 
 
         # Export the filtered DataFrame to the specified export path
         if export_path:
